@@ -1,0 +1,6 @@
+dist/
+node_modules/
+.reference/
+data/
+coverage/
+package-lock.json

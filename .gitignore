@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.reference/
+data/
+coverage/
+*.tsbuildinfo
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.*
+!.env.example

@@ -1,0 +1,70 @@
+{
+  "name": "@openscreeps/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Typed, embeddable Screeps-compatible standalone server",
+  "type": "module",
+  "engines": {
+    "node": ">=24.21.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "openscreeps-server": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "reference-versions.json"
+  ],
+  "scripts": {
+    "start": "tsx src/cli.ts start",
+    "cli": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@nestjs/common": "12.1.2",
+    "@nestjs/core": "12.1.2",
+    "@nestjs/platform-express": "12.1.2",
+    "@openscreeps/engine": "github:openscreeps/engine#616c922",
+    "express": "5.2.1",
+    "pngjs": "7.0.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "sockjs": "0.3.24"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "isolated-vm@7.0.1": true,
+    "github:openscreeps/engine#bafba680d9a11aaa26ed12104f7beada6997170a": true,
+    "github:openscreeps/engine#616c922a22347d68254116dc90196b161209a744": true
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/express": "5.0.6",
+    "@types/node": "24.19.1",
+    "@types/pngjs": "6.0.5",
+    "@types/sockjs": "0.3.36",
+    "@types/sockjs-client": "1.5.4",
+    "eslint": "10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.9",
+    "sockjs-client": "1.6.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

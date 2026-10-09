@@ -1,0 +1,20 @@
+[tools]
+node = "24.21.0"
+
+[tasks.install]
+run = "npm ci"
+
+[tasks.check]
+run = "npm run check"
+
+[tasks.build]
+run = "npm run build"
+
+[tasks.test]
+run = "npm test"
+
+[tasks.format]
+run = "npm run format"
+
+[tasks.start]
+run = "npm start"
