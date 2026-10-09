@@ -1,0 +1,17 @@
+{
+  "backend": {
+    "repository": "https://github.com/screeps/backend-local",
+    "commit": "9d079282303ec04e577ac2bb97f64312b25e4ccd",
+    "license": "ISC"
+  },
+  "launcher": {
+    "repository": "https://github.com/screeps/launcher",
+    "commit": "a5452f195a35ecd319a4645817f1793cbf85580d",
+    "license": "ISC"
+  },
+  "storage": {
+    "repository": "https://github.com/screeps/storage",
+    "commit": "3d6c3d0e36f98375ae1b6a76136c4b9e1b727e85",
+    "license": "ISC"
+  }
+}
