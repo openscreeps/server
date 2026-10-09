@@ -1,20 +1,13 @@
 import type {
-  BotRuntime,
-  CodeModules,
-  ManualIntents,
-  RuntimeSnapshot,
-  StoredUserIntents,
-  TickResult,
-  TickRunResult,
-  WorldState,
-} from '@openscreeps/engine';
+  GameContext,
+  GameState,
+  GameTick,
+  JsonObject,
+  NotificationBatch,
+  User,
+} from '@openscreeps/game';
 import type { EventEmitter } from 'node:events';
 
-export type JsonValue =
-  null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-export type JsonObject = { [key: string]: JsonValue };
-export type User = WorldState['users'][string];
-export type RoomObject = WorldState['roomObjects'][string];
 export interface UserProfile {
   email?: string;
   emailDirty?: string;
@@ -31,15 +24,6 @@ export interface UserProfile {
   lastChargeTime?: number;
   lastOnline?: number;
 }
-export interface CodeBranch {
-  _id: string;
-  user: string;
-  branch: string;
-  modules: CodeModules;
-  activeWorld: boolean;
-  activeSim: boolean;
-  timestamp: number;
-}
 export interface UserMessage {
   _id: string;
   user: string;
@@ -50,52 +34,27 @@ export interface UserMessage {
   unread: boolean;
   outMessage?: string;
 }
-export interface HistoryFrame {
-  time: number;
-  objects: Record<string, unknown>;
-}
-export interface StatisticsSample {
-  /** Minute bucket start in wall-clock milliseconds; room increments accumulate in this bucket. */
-  time: number;
-  tick: number;
-  ticks: number;
-  rooms: TickResult['roomStats'];
-  users: Record<
-    string,
-    { cpu: number; memory: number; bucket: number; gcl: number; power: number }
-  >;
-}
-export interface ServerState {
-  version: 1;
-  world: WorldState;
-  runtime: RuntimeSnapshot;
+/**
+ * The persisted world: the credential-free game state plus server-private account, session and
+ * scheduling records (one flat document, so existing snapshots keep their shape).
+ */
+export interface ServerState extends GameState {
   profiles: Record<string, UserProfile>;
-  branches: Record<string, CodeBranch>;
   /** SHA-256 token hashes, never plaintext bearer credentials. */
   tokens: Record<string, { userId: string; expires: number }>;
   messages: Record<string, UserMessage>;
-  history: Record<string, HistoryFrame[]>;
-  statistics: StatisticsSample[];
-  leaderboard: Record<string, Record<string, { world: number; power: number }>>;
-  /** Persisted backend timers and per-room scheduler metadata. */
-  jobs: Record<string, number>;
-  /** Notifications ready for delivery to an operator-configured sink. */
-  notificationOutbox: Array<{
-    id: string;
-    userId: string;
-    email?: string;
-    messages: string[];
-    date: number;
-  }>;
-  pendingIntents: ManualIntents;
-  pendingGlobalIntents: Record<string, NonNullable<StoredUserIntents['global']>>;
+  /** Notification batches from maintenance, ready for delivery to an operator-configured sink. */
+  notificationOutbox: NotificationBatch[];
   paused: boolean;
   tickDuration: number;
 }
 export interface ServerConfig {
   host: string;
   port: number;
+  /** SQLite world file; also locates the local admin token file when the world is in PostgreSQL. */
   database: string;
+  /** PostgreSQL connection URL (postgres:// or postgresql://); when set it holds the world. */
+  databaseUrl?: string;
   tickDuration: number;
   paused: boolean;
   worldSize: number;
@@ -111,13 +70,9 @@ export interface ServerConfig {
   socketUpdateThrottle: number;
   tokenLifetimeMs: number;
   /** Optional delivery callback; absent means retained operator-visible outbox, never lost mail. */
-  deliverNotifications?: (notification: ServerState['notificationOutbox'][number]) => Promise<void>;
+  deliverNotifications?: (notification: NotificationBatch) => Promise<void>;
 }
-export interface TickEvent {
-  simulation: TickResult;
-  runtime: TickRunResult;
-  timestamp: number;
-}
+export type TickEvent = GameTick;
 export interface ServerEvents {
   tick: [event: TickEvent];
   message: [channel: string, data: unknown];
@@ -125,18 +80,15 @@ export interface ServerEvents {
   reset: [];
   error: [error: Error];
 }
-export interface ServerContext {
+export interface ServerContext extends GameContext<ServerState> {
   readonly config: ServerConfig;
-  readonly state: ServerState;
-  readonly runtime: BotRuntime;
   readonly events: EventEmitter<ServerEvents>;
-  now(): number;
   /** Serialize reads with ticks. Call only from outside a read/mutate callback. */
   read<T>(operation: () => T | Promise<T>): Promise<T>;
   /** Serialize, durably commit, then publish events. Never nest calls. */
   mutate<T>(operation: () => T | Promise<T>): Promise<T>;
   publish(channel: string, data: unknown): void;
-  /** Call after changing room terrain; refreshes engine pathfinding before next tick. */
+  /** Call after changing room terrain inside a mutation; refreshes pathfinding before next tick. */
   terrainChanged(): void;
   step(): Promise<TickEvent>;
   setPaused(paused: boolean): Promise<void>;
@@ -156,18 +108,6 @@ export interface ApiRequest {
   body: Record<string, unknown>;
   userId?: string;
   headers: Record<string, string | string[] | undefined>;
-  /** Verified external input prepared by the route, never read from request JSON. */
-  prepared?: unknown;
-}
-export interface ApiRoute {
-  method: 'GET' | 'POST';
-  path: string;
-  auth?: boolean;
-  write?: boolean;
-  /** External authentication/network work, before acquiring the world lock. */
-  prepare?(request: ApiRequest, context: ServerContext): Promise<unknown>;
-  /** Normal handlers already run under the context lock; do not call read/mutate inside them. */
-  handle(request: ApiRequest, context: ApiContext): unknown;
 }
 export class ApiError extends Error {
   constructor(
@@ -188,7 +128,4 @@ export function requireUser(request: ApiRequest, context: ServerContext): User {
   const user = request.userId === undefined ? undefined : context.state.world.users[request.userId];
   if (!user) throw new ApiError('unauthorized', 401);
   return user;
-}
-export function newId(state: ServerState): string {
-  return (++state.world.idCounter).toString(16).padStart(24, '0');
 }

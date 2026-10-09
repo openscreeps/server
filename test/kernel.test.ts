@@ -1,11 +1,50 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
+import { gameStateOf, spawnBot } from '@openscreeps/game';
+import { createUser } from '../src/api/users.ts';
 import { createConfig } from '../src/config.ts';
-import { ServerKernel } from '../src/kernel.ts';
-import { spawnBot } from '../src/world/index.ts';
+import { ServerKernel } from '../src/services/server-kernel.service.ts';
+
+void it('delivers maintenance notifications to account addresses outside the game state', async () => {
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+  );
+  try {
+    const user = await kernel.mutate(() => {
+      const created = createUser(kernel, {
+        username: 'alice',
+        password: 'correct horse battery',
+        email: 'alice@example.com',
+      });
+      kernel.state.tokens['token-hash'] = { userId: created._id, expires: kernel.now() + 60000 };
+      kernel.state.world.notifications.n1 = {
+        _id: 'n1',
+        user: created._id,
+        message: 'attacked',
+        date: kernel.now() - 1,
+        type: 'msg',
+        count: 1,
+      };
+      return created;
+    });
+    const tick = await kernel.step();
+    assert.deepEqual(tick.maintenance.errors, []);
+    assert.equal(kernel.state.notificationOutbox.length, 1);
+    assert.equal(kernel.state.notificationOutbox[0]?.userId, user._id);
+    assert.equal(kernel.state.notificationOutbox[0].email, 'alice@example.com');
+
+    const game = JSON.stringify(gameStateOf(kernel.state));
+    for (const secret of ['passwordHash', 'token-hash', 'alice@example.com', 'profiles']) {
+      assert.ok(!game.includes(secret), secret);
+    }
+    assert.ok(game.includes('"alice"'));
+  } finally {
+    await kernel.close();
+  }
+});
 
 void it('preserves a committed terrain invalidation across a later rejected mutation', async () => {
-  const kernel = new ServerKernel(
+  const kernel = await ServerKernel.create(
     createConfig({ database: ':memory:', worldSize: 2, paused: true }),
   );
   try {
@@ -53,7 +92,7 @@ void it('preserves a committed terrain invalidation across a later rejected muta
 });
 
 void it('rejects malformed nested snapshots before replacing a usable world', async () => {
-  const kernel = new ServerKernel(
+  const kernel = await ServerKernel.create(
     createConfig({ database: ':memory:', worldSize: 2, paused: true }),
   );
   try {

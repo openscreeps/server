@@ -1,0 +1,32 @@
+# PostgreSQL override: docker compose -f compose.yaml -f compose.postgres.yaml ...
+# The server keeps the `data` volume for its admin token file (/data/world.sqlite.admin-token);
+# SCREEPS_DATABASE_URL takes precedence over the SQLite path for world storage.
+services:
+  server:
+    environment:
+      - SCREEPS_DATABASE_URL=postgresql://${POSTGRES_USER:-openscreeps}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (URL-safe characters) in .env}@postgres:5432/${POSTGRES_DB:-openscreeps}
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-openscreeps}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (URL-safe characters) in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-openscreeps}
+    # Not published: only the server reaches PostgreSQL, over the Compose network.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+volumes:
+  postgres-data:

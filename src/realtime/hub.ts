@@ -8,8 +8,9 @@
  * is serialized with ticks and mutations.
  */
 
+import type { JsonObject } from '@openscreeps/game';
 import { isRecord } from '../api/guards.ts';
-import type { ApiContext, JsonObject, TickEvent } from '../contracts.ts';
+import type { ApiContext, TickEvent } from '../contracts.ts';
 import { canSubscribe, parseChannel, type ChannelSpec } from './channels.ts';
 import { jsonObjects, RoomObjectsMirror } from './diff.ts';
 import { encodeFrame, eventMessage, htmlEncode } from './encode.ts';

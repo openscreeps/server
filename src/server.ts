@@ -1,129 +1,110 @@
 import 'reflect-metadata';
-import {
-  Catch,
-  Controller,
-  Get,
-  HttpException,
-  Inject,
-  Module,
-  Param,
-  Res,
-  type ArgumentsHost,
-  type DynamicModule,
-  type ExceptionFilter,
-} from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { Inject, Module, type DynamicModule, type OnModuleDestroy } from '@nestjs/common';
+import { APP_FILTER, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded, type NextFunction, type Request, type Response } from 'express';
 import { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { ApiError, type ApiContext, type ServerConfig, type ServerState } from './contracts.ts';
+import type { ApiContext, ServerConfig, ServerState } from './contracts.ts';
 import { createConfig } from './config.ts';
-import { ServerKernel } from './kernel.ts';
+import { ServerKernel } from './services/server-kernel.service.ts';
+import { StateStore } from './services/state-store.service.ts';
+import { PersistenceModule } from './persistence.module.ts';
 import { createAuthService } from './api/auth.ts';
+import { HostController, InformationController, RootController } from './http.ts';
+import { AdminController, AdminGuard } from './admin.ts';
+import { AuthController, RegistrationController, UserController } from './api/accounts.ts';
+import { MessagesController } from './api/messages.ts';
+import { GameController } from './api/game.ts';
+import { MarketController } from './api/market.ts';
+import { PowerController } from './api/power.ts';
+import { LeaderboardController } from './api/leaderboard.ts';
 import {
-  ApiController,
-  ApiDispatcher,
-  RootController,
+  DecorationsController,
+  SteamController,
+  UserDecorationsController,
+  XsollaController,
+} from './api/platform.ts';
+import {
+  ApiExceptionFilter,
+  ApiGuard,
+  ApiInterceptor,
   SERVER_CONTEXT,
   secretsEqual,
-  sendError,
-} from './http.ts';
-import { AdminController, AdminGuard } from './admin.ts';
-import { getAsset } from './assets.ts';
-import { installRealtime } from './realtime/index.ts';
-
-@Controller()
-class HostController {
-  constructor(
-    @Inject(SERVER_CONTEXT) readonly context: ApiContext,
-    @Inject(ServerKernel) readonly kernel: ServerKernel,
-  ) {}
-
-  @Get('health')
-  async health(@Res() response: Response): Promise<void> {
-    if (!this.kernel.healthy) {
-      response.status(503).json({ error: 'server unavailable' });
-      return;
-    }
-    try {
-      const state = await this.context.read(() => ({
-        ok: 1,
-        time: this.context.state.world.gameTime,
-        paused: this.context.state.paused,
-      }));
-      response.json(state);
-    } catch {
-      response.status(503).json({ error: 'server unavailable' });
-    }
-  }
-
-  @Get('assets/{*path}')
-  async asset(@Param('path') rawPath: unknown, @Res() response: Response): Promise<void> {
-    try {
-      let path: string;
-      if (typeof rawPath === 'string') path = rawPath;
-      else if (
-        Array.isArray(rawPath) &&
-        rawPath.every((item: unknown) => typeof item === 'string')
-      ) {
-        path = rawPath.join('/');
-      } else throw new ApiError('not found', 404);
-      const asset = await getAsset(this.context, path);
-      if (!asset) throw new ApiError('not found', 404);
-      response
-        .set('Cache-Control', 'no-cache')
-        .set('X-Content-Type-Options', 'nosniff')
-        .type(asset.contentType)
-        .send(asset.body);
-    } catch (error) {
-      sendError(error, response);
-    }
-  }
-}
-
-@Catch()
-class HttpErrorFilter implements ExceptionFilter {
-  catch(error: unknown, host: ArgumentsHost): void {
-    const response = host.switchToHttp().getResponse<Response>();
-    if (response.headersSent) return;
-    if (error instanceof HttpException) {
-      const body = error.getResponse();
-      if (typeof body === 'object' && 'error' in body)
-        response.status(error.getStatus()).json(body);
-      else response.status(error.getStatus()).json({ error: error.message });
-    } else if (
-      error instanceof Error &&
-      'status' in error &&
-      typeof error.status === 'number' &&
-      error.status >= 400 &&
-      error.status < 500
-    ) {
-      response
-        .status(error.status)
-        .json({ error: error.status === 413 ? 'request too large' : 'invalid request' });
-    } else sendError(error, response);
-  }
-}
+} from './api/transport.ts';
+import { AccountsService } from './services/accounts.ts';
+import { MessagesService } from './services/messages.ts';
+import { GameService } from './services/game.ts';
+import { MarketService } from './services/market.ts';
+import { PowerService } from './services/power.ts';
+import { LeaderboardService } from './services/leaderboard.ts';
+import { SteamNewsService } from './services/steam-news.ts';
+import { AdminService } from './services/admin.service.ts';
+import { HostService } from './services/host.service.ts';
+import { RealtimeService } from './services/realtime.service.ts';
 
 @Module({})
-export class OpenScreepsModule {
+export class OpenScreepsModule implements OnModuleDestroy {
   constructor(@Inject(ServerKernel) readonly kernel: ServerKernel) {}
 
-  async onApplicationShutdown(): Promise<void> {
+  async onModuleDestroy(): Promise<void> {
+    // Drain outstanding mutations before TypeORM destroys the database connection.
     await this.kernel.close();
   }
 
-  static register(kernel: ServerKernel, context: ApiContext): DynamicModule {
+  static register(
+    config: ServerConfig,
+    options: { state?: ServerState; now?: () => number } = {},
+  ): DynamicModule {
     return {
       module: OpenScreepsModule,
-      controllers: [ApiController, RootController, HostController, AdminController],
-      providers: [
-        { provide: ServerKernel, useValue: kernel },
-        { provide: SERVER_CONTEXT, useValue: context },
-        ApiDispatcher,
-        AdminGuard,
+      imports: [PersistenceModule.register(config)],
+      controllers: [
+        InformationController,
+        RootController,
+        HostController,
+        AdminController,
+        AuthController,
+        RegistrationController,
+        UserController,
+        MessagesController,
+        GameController,
+        MarketController,
+        PowerController,
+        LeaderboardController,
+        SteamController,
+        XsollaController,
+        DecorationsController,
+        UserDecorationsController,
       ],
+      providers: [
+        {
+          provide: ServerKernel,
+          useFactory: (store: StateStore) => ServerKernel.create(config, options, store),
+          inject: [StateStore],
+        },
+        {
+          provide: SERVER_CONTEXT,
+          useFactory: (kernel: ServerKernel): ApiContext =>
+            Object.assign(kernel, { auth: createAuthService(kernel) }),
+          inject: [ServerKernel],
+        },
+        { provide: APP_FILTER, useClass: ApiExceptionFilter },
+        ApiGuard,
+        ApiInterceptor,
+        AdminGuard,
+        AccountsService,
+        MessagesService,
+        GameService,
+        MarketService,
+        PowerService,
+        LeaderboardService,
+        SteamNewsService,
+        AdminService,
+        HostService,
+        RealtimeService,
+      ],
+      exports: [ServerKernel, SERVER_CONTEXT],
     };
   }
 }
@@ -144,21 +125,14 @@ export interface RunningServer extends AsyncDisposable {
 export async function createServer(options: ServerOptions = {}): Promise<RunningServer> {
   const { initialState, now, ...settings } = options;
   const config = createConfig(settings);
-  const kernel = new ServerKernel(config, {
-    ...(initialState === undefined ? {} : { state: initialState }),
-    ...(now === undefined ? {} : { now }),
-  });
-  const context: ApiContext = Object.assign(kernel, { auth: createAuthService(kernel) });
   let app: NestExpressApplication | undefined;
-  let realtime: { close(): void } | undefined;
   try {
     app = await NestFactory.create<NestExpressApplication>(
-      OpenScreepsModule.register(kernel, context),
-      {
-        bodyParser: false,
-        logger: false,
-        abortOnError: false,
-      },
+      OpenScreepsModule.register(config, {
+        ...(initialState === undefined ? {} : { state: initialState }),
+        ...(now === undefined ? {} : { now }),
+      }),
+      { bodyParser: false, logger: false, abortOnError: false },
     );
     app.enableCors({
       origin: true,
@@ -188,37 +162,23 @@ export async function createServer(options: ServerOptions = {}): Promise<Running
     );
     app.use(json({ limit: '8mb' }));
     app.use(urlencoded({ limit: '8mb', extended: true }));
-    app.useGlobalFilters(new HttpErrorFilter());
     await app.init();
     const rawServer: unknown = app.getHttpServer();
     if (!(rawServer instanceof HttpServer))
       throw new Error('Nest did not create a Node HTTP server');
     const server = rawServer as HttpServer;
-    realtime = installRealtime(server, context);
     await app.listen(config.port, config.host);
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Expected a TCP listen address');
+    const kernel = app.get(ServerKernel);
+    const context = app.get<ApiContext>(SERVER_CONTEXT);
     kernel.start();
     let closing: Promise<void> | undefined;
     const application = app;
-    const sockets = realtime;
-    const close = (): Promise<void> =>
-      (closing ??= (async () => {
-        sockets.close();
-        try {
-          await application.close();
-        } finally {
-          await kernel.close();
-        }
-      })());
+    const close = (): Promise<void> => (closing ??= application.close());
     return { kernel, context, address, close, [Symbol.asyncDispose]: close };
   } catch (error) {
-    realtime?.close();
-    try {
-      await app?.close();
-    } finally {
-      await kernel.close();
-    }
+    await app?.close();
     throw error;
   }
 }

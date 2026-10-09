@@ -2,11 +2,10 @@
 
 ## Screeps standalone backend, launcher and storage — ISC
 
-HTTP API behavior, badge shapes, world generation, world-maintenance jobs,
-NPC management and live protocol behavior derive from the public Screeps
-standalone implementation. Reference revisions are recorded in
-`reference-versions.json`. SQLite hosting and Nest integration are implemented
-here; the upstream storage and launcher sources serve as behavioral references.
+HTTP API behavior, badge shapes and live protocol behavior derive from the public
+Screeps standalone implementation. Reference revisions are recorded in
+`reference-versions.json`. SQLite/PostgreSQL persistence and Nest integration are
+implemented here; the upstream storage and launcher sources serve as behavioral references.
 
 - https://github.com/screeps/backend-local
 - https://github.com/screeps/launcher
@@ -28,10 +27,17 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## OpenScreeps engine
 
-The separately installed `@openscreeps/engine` dependency includes its own
-`LICENSE`, `THIRD_PARTY_NOTICES.md` and source-revision manifest, covering the
-Screeps engine/common/driver ports and bundled runtime libraries. Its exact
-revision is pinned in this repository's package metadata and lockfile.
+The transitive `@openscreeps/engine` dependency, owned by `@openscreeps/game`,
+includes its own `LICENSE`, `THIRD_PARTY_NOTICES.md` and source-revision manifest,
+covering the Screeps engine/common/driver ports and bundled runtime libraries.
+Its exact revision is pinned by the game package and recorded in the server lockfile.
+
+## OpenScreeps game
+
+World generation, world-maintenance jobs, NPC management, player code and
+gameplay operations live in the separately installed `@openscreeps/game`
+dependency, which includes its own `LICENSE`, `THIRD_PARTY_NOTICES.md` and
+source-revision manifest for the Screeps backend code it derives from.
 
 ## he 1.2.0 — MIT
 
@@ -90,6 +96,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Other dependencies and client
 
-NestJS, Express, SockJS, pngjs and the remaining npm dependencies retain their
-respective package licenses. The proprietary official game client and its assets
-are not distributed by this package.
+NestJS, Express, TypeORM, better-sqlite3, node-postgres, SockJS, pngjs and the
+remaining npm dependencies retain their respective package licenses. The
+proprietary official game client and its assets are not distributed by this package.

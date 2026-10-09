@@ -38,6 +38,13 @@ export function createConfig(options: Partial<ServerConfig> = {}): ServerConfig 
   if (!config.host || !config.database || !/^[A-Za-z0-9_-]{1,64}$/.test(config.shardName)) {
     throw new Error('Invalid host, database, or shard name');
   }
+  if (config.databaseUrl !== undefined) {
+    const protocol = URL.parse(config.databaseUrl)?.protocol;
+    // Never echo the URL: it usually carries the database password.
+    if (protocol !== 'postgres:' && protocol !== 'postgresql:') {
+      throw new Error('Invalid databaseUrl: expected a postgres:// or postgresql:// URL');
+    }
+  }
   if (config.adminToken !== undefined && config.adminToken.length < 32) {
     throw new Error('The admin token must contain at least 32 characters');
   }
@@ -56,6 +63,7 @@ export function configFromEnvironment(
       ServerConfig,
       | 'host'
       | 'database'
+      | 'databaseUrl'
       | 'shardName'
       | 'serverPassword'
       | 'adminToken'
@@ -65,6 +73,7 @@ export function configFromEnvironment(
   > = {
     GAME_HOST: 'host',
     SCREEPS_DATABASE: 'database',
+    SCREEPS_DATABASE_URL: 'databaseUrl',
     SHARD_NAME: 'shardName',
     SERVER_PASSWORD: 'serverPassword',
     SCREEPS_ADMIN_TOKEN: 'adminToken',

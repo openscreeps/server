@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
-import type { JsonObject, JsonValue } from '../src/contracts.ts';
+import type { JsonObject, JsonValue } from '@openscreeps/game';
 import {
   historyTicks,
   jsonObjects,

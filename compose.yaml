@@ -1,0 +1,31 @@
+# OpenScreeps server with its SQLite world in the named `data` volume.
+# PostgreSQL instead: docker compose -f compose.yaml -f compose.postgres.yaml ...
+services:
+  server:
+    build:
+      context: .
+    restart: unless-stopped
+    # Time to close sockets and commit the world after SIGTERM before Docker sends SIGKILL.
+    stop_grace_period: 30s
+    ports:
+      # Loopback only by default; publish deliberately, preferably behind a TLS reverse proxy.
+      - '${OPENSCREEPS_PUBLISH_ADDRESS:-127.0.0.1}:${OPENSCREEPS_PUBLISH_PORT:-21025}:21025'
+    environment:
+      - GAME_HOST=0.0.0.0
+      - SCREEPS_DATABASE=/data/world.sqlite
+      # Passed through from the shell or .env only when set there; unset otherwise.
+      - STEAM_KEY
+      - SERVER_PASSWORD
+      - SCREEPS_ADMIN_TOKEN
+    volumes:
+      - data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  data:

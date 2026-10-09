@@ -5,22 +5,8 @@
  * <contact@screeps.com>, used under the ISC license (see THIRD_PARTY_NOTICES.md).
  */
 
+import type { Badge, CustomBadgePaths } from '@openscreeps/game';
 import { isRecord } from './guards.ts';
-
-export interface CustomBadgePaths {
-  path1: string;
-  path2: string;
-}
-
-export interface Badge {
-  type: number | CustomBadgePaths;
-  /** `#rrggbb`, or an index into the legacy badge palette. */
-  color1: string | number;
-  color2: string | number;
-  color3: string | number;
-  param: number;
-  flip: boolean;
-}
 
 type Flip = 'rotate45' | 'rotate90' | 'rotate180';
 

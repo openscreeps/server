@@ -11,10 +11,10 @@
 
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
-import { constants as C } from '@openscreeps/engine';
+import { constants as C } from '@openscreeps/game';
 import { PNG } from 'pngjs';
+import { roomNameFromXY, roomNameToXY } from '@openscreeps/game';
 import type { ServerContext } from './contracts.ts';
-import { roomNameFromXY, roomNameToXY } from './world/rooms.ts';
 
 export interface Asset {
   body: Buffer;

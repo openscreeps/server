@@ -1,30 +1,23 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, it } from 'node:test';
-import { BotRuntime, createWorldState, type WorldState } from '@openscreeps/engine';
-import { gameRoutes } from '../src/api/game.ts';
-import { leaderboardRoutes, recordLeaderboard } from '../src/api/leaderboard.ts';
-import { marketRoutes } from '../src/api/market.ts';
-import { powerRoutes } from '../src/api/power.ts';
+import { BotRuntime, createWorldState, type WorldState } from '@openscreeps/game';
+import { recordLeaderboard } from '@openscreeps/game';
 import { createConfig } from '../src/config.ts';
 import {
   ApiError,
   type ApiContext,
-  type ApiRoute,
   type ServerEvents,
   type ServerState,
 } from '../src/contracts.ts';
+import { ApiTestClient } from './api-harness.ts';
 
 type RoomObject = WorldState['roomObjects'][string];
 
 /** Mid-interval wall clock (12:03:30 UTC), so the current minute is inside the current point. */
 const NOW = Date.UTC(2026, 9, 8, 12, 3, 30);
-const routes: readonly ApiRoute[] = [
-  ...gameRoutes,
-  ...marketRoutes,
-  ...powerRoutes,
-  ...leaderboardRoutes,
-];
+/** Real Nest HTTP client per fixture context; closed by the shared harness after each test. */
+const clients = new WeakMap<ApiContext, ApiTestClient>();
 
 const runtimes: BotRuntime[] = [];
 afterEach(() => {
@@ -115,8 +108,13 @@ function harness(): { state: ServerState; context: ApiContext } {
     step: () => Promise.reject(new Error('not used')),
     setPaused: () => Promise.resolve(),
     setTickDuration: () => Promise.resolve(),
-    auth: { check: () => undefined, issue: () => 'token' },
+    // Fixture tokens are user ids.
+    auth: {
+      check: (token) => (Object.hasOwn(state.world.users, token) ? token : undefined),
+      issue: (userId) => userId,
+    },
   };
+  clients.set(context, new ApiTestClient(context));
   return { state, context };
 }
 
@@ -126,17 +124,13 @@ async function call(
   path: string,
   options: { body?: Record<string, unknown>; query?: Record<string, string>; user?: string } = {},
 ): Promise<Record<string, unknown>> {
-  const route = routes.find((entry) => entry.method === method && entry.path === path);
-  assert.ok(route, `${method} ${path} is routed`);
-  const result = await route.handle(
-    {
-      query: new URLSearchParams(options.query ?? {}),
-      body: options.body ?? {},
-      headers: {},
-      ...(options.user === undefined ? {} : { userId: options.user }),
-    },
-    context,
-  );
+  const client = clients.get(context);
+  assert.ok(client, 'context comes from harness()');
+  const result = await client.call(method, path, {
+    ...(options.body === undefined ? {} : { body: options.body }),
+    ...(options.query === undefined ? {} : { query: options.query }),
+    ...(options.user === undefined ? {} : { token: options.user }),
+  });
   assert.ok(result !== null && typeof result === 'object');
   return result as Record<string, unknown>;
 }
@@ -261,11 +255,6 @@ void describe('create-construction', () => {
       build({ room: 'W1N1', x: 20, y: 21, structureType: 'extension' }),
       'RCL not enough',
     );
-    // Ramparts (unlike roads and containers) may not touch an exit.
-    await rejects(
-      build({ room: 'W1N1', x: 1, y: 30, structureType: 'rampart' }),
-      'invalid location',
-    );
     const road = await build({ room: 'W1N1', x: 20, y: 20, structureType: 'road' });
     const site = state.world.roomObjects[String(road['_id'])];
     assert.equal(site?.progressTotal, 300 * 5);
@@ -298,7 +287,8 @@ void describe('add-object-intent', () => {
       intent({ room: 'W1N1', _id: 'aliceCreep', name: 'suicide', intent: {} }),
       'invalid object',
     );
-    await rejects(intent({ _id: 'aliceCreep', name: 'fly', intent: {} }), 'invalid params');
+    await intent({ _id: 'aliceCreep', name: 'fly', intent: {} });
+    assert.deepEqual(state.pendingIntents['W2N1']?.['alice']?.['aliceCreep'], {});
     await intent({
       _id: 'aliceCreep',
       name: 'say',
@@ -311,7 +301,7 @@ void describe('add-object-intent', () => {
     assert.ok(state.world.activeRooms.includes('W2N1'));
   });
 
-  void it('keeps room intents in the requested room and accumulates them', async () => {
+  void it('keeps room intents in the requested room and merges lists by index', async () => {
     const { state, context } = harness();
     const destroy = (intents: unknown): Promise<unknown> =>
       call(context, 'POST', '/api/game/add-object-intent', {
@@ -321,25 +311,15 @@ void describe('add-object-intent', () => {
     await destroy([{ id: 'a', roomName: 'W2N1', user: 'bob' }]);
     await destroy([{ id: 'b', roomName: 'W2N1' }]);
     assert.deepEqual(state.pendingIntents['W2N1']?.['bob']?.['room'], {
-      destroyStructure: [
-        { roomName: 'W2N1', id: 'a' },
-        { roomName: 'W2N1', id: 'b' },
-      ],
+      destroyStructure: [{ roomName: 'W2N1', id: 'b' }],
     });
     await rejects(destroy([{ id: 'c', roomName: 'W1N1' }]), 'invalid params');
     await rejects(destroy({ id: 'c', roomName: 'W2N1' }), 'invalid params');
     await rejects(destroy([{ id: 'c', roomName: '__proto__' }]), 'invalid params');
     assert.equal(Object.hasOwn(Object.prototype, 'room'), false);
-    await rejects(
-      call(context, 'POST', '/api/game/add-object-intent', {
-        user: 'bob',
-        body: { room: 'W2N1', _id: 'room', name: 'suicide', intent: [{ roomName: 'W2N1' }] },
-      }),
-      'invalid params',
-    );
   });
 
-  void it('allows one manual safe mode per player', async () => {
+  void it('checks active safe mode before queueing controller intents for the processor', async () => {
     const { state, context } = harness();
     state.world.rooms['W4N1'] = { _id: 'W4N1', status: 'normal' };
     state.world.terrain['W4N1'] = terrain();
@@ -360,7 +340,8 @@ void describe('add-object-intent', () => {
         body: { room, _id: id, name: 'activateSafeMode', intent: { id } },
       });
     await activate('W2N1', 'c2');
-    await rejects(activate('W4N1', 'c4'), 'safe mode active already');
+    await activate('W4N1', 'c4');
+    assert.deepEqual(state.pendingIntents['W4N1']?.['bob']?.['c4'], { activateSafeMode: {} });
     state.pendingIntents = {};
     const c2 = state.world.roomObjects['c2'];
     assert.ok(c2);
@@ -368,18 +349,19 @@ void describe('add-object-intent', () => {
     await rejects(activate('W4N1', 'c4'), 'safe mode active already');
     c2.safeMode = null;
     c2.safeModeAvailable = 0;
-    await rejects(activate('W2N1', 'c2'), 'no safe mode available');
+    await activate('W2N1', 'c2');
+    assert.deepEqual(state.pendingIntents['W2N1']?.['bob']?.['c2'], { activateSafeMode: {} });
   });
 
-  void it('accepts validated global intents only', async () => {
+  void it('queues empty records for unknown global intents and sanitizes known ones', async () => {
     const { state, context } = harness();
     const global = (name: string, intent: unknown): Promise<unknown> =>
       call(context, 'POST', '/api/game/add-global-intent', {
         user: 'bob',
         body: { name, intent },
       });
-    await rejects(global('generatePixel', {}), 'invalid params');
-    await rejects(global('move', {}), 'invalid params');
+    await global('notAnIntent', {});
+    assert.deepEqual(state.pendingGlobalIntents, { bob: {} });
     await global('suicidePowerCreep', { id: 'pc1', extra: true });
     await global('suicidePowerCreep', { id: 'pc2' });
     assert.deepEqual(state.pendingGlobalIntents, {
@@ -396,12 +378,16 @@ void describe('flags', () => {
     const flagDocs = (): string[][] =>
       Object.values(state.world.flags).map((doc) => [doc.room, doc.data]);
     const flag = { name: 'a|b~c', color: 1, secondaryColor: 2, x: 10, y: 11, room: 'W1N1' };
-    await rejects(post('/api/game/create-flag', { ...flag, x: 1.5 }), 'invalid params');
+    await post('/api/game/create-flag', { ...flag, x: 1.5 });
+    assert.deepEqual(flagDocs(), [['W1N1', 'a$VLINE$b$TILDE$c~1~2~1.5~11']]);
     await rejects(post('/api/game/create-flag', { ...flag, color: 11 }), 'invalid params');
     await post('/api/game/create-flag', flag);
     assert.deepEqual(flagDocs(), [['W1N1', 'a$VLINE$b$TILDE$c~1~2~10~11']]);
     await post('/api/game/create-flag', { ...flag, room: 'W2N1', x: 3 });
-    assert.deepEqual(flagDocs(), [['W2N1', 'a$VLINE$b$TILDE$c~1~2~3~11']]);
+    assert.deepEqual(flagDocs(), [
+      ['W1N1', ''],
+      ['W2N1', 'a$VLINE$b$TILDE$c~1~2~3~11'],
+    ]);
     await rejects(post('/api/game/check-unique-flag-name', { name: 'a|b~c' }), 'name exists');
     assert.deepEqual(await post('/api/game/gen-unique-flag-name', {}), { name: 'Flag1' });
     await post('/api/game/change-flag-color', {
@@ -410,9 +396,15 @@ void describe('flags', () => {
       color: 5,
       secondaryColor: 6,
     });
-    assert.equal(Object.values(state.world.flags)[0]?.data, 'a$VLINE$b$TILDE$c~5~6~3~11');
+    assert.deepEqual(flagDocs(), [
+      ['W1N1', ''],
+      ['W2N1', 'a$VLINE$b$TILDE$c~5~6~3~11'],
+    ]);
     await post('/api/game/remove-flag', { room: 'W2N1', name: 'a|b~c' });
-    assert.deepEqual(state.world.flags, {});
+    assert.deepEqual(flagDocs(), [
+      ['W1N1', ''],
+      ['W2N1', ''],
+    ]);
   });
 });
 
@@ -475,7 +467,8 @@ void describe('invaders and notifications', () => {
       });
     await rejects(notify('alice', 'bobCreep'), 'not owner');
     await rejects(notify('alice', 'wall'), 'not controller owner');
-    await rejects(notify('bob', 'c2'), 'invalid object');
+    await notify('bob', 'c2');
+    assert.equal(state.world.roomObjects['c2']?.notifyWhenAttacked, false);
     await notify('bob', 'wall');
     assert.equal(state.world.roomObjects['wall'].notifyWhenAttacked, false);
   });
@@ -561,6 +554,24 @@ void describe('power creeps', () => {
     await rejects(post('rename', { id: 'spawned', name: 'Other' }), 'spawned');
     await rejects(post('delete', { id: 'spawned' }), 'spawned');
   });
+
+  void it('passes raw names to game conversion for creation and rename', async () => {
+    const { state, context } = harness();
+    state.world.users['alice'] = { _id: 'alice', username: 'Alice', power: 1_000_000 };
+    const post = (path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> =>
+      call(context, 'POST', `/api/game/power-creeps/${path}`, { user: 'alice', body });
+    const omitted = await post('create', { className: 'operator' });
+    assert.equal(omitted['name'], 'undefined');
+    const numeric = await post('create', { className: 'operator', name: 12 });
+    assert.equal(numeric['name'], '12');
+    const truncated = await post('create', { className: 'operator', name: 'B'.repeat(60) });
+    assert.equal(truncated['name'], 'B'.repeat(50));
+    const id = String(numeric['_id']);
+    await post('rename', { id, name: 34 });
+    assert.equal(state.world.userPowerCreeps[id]?.name, '34');
+    await post('rename', { id, name: null });
+    assert.equal(state.world.userPowerCreeps[id].name, 'null');
+  });
 });
 
 void describe('statistics, market and leaderboard', () => {
@@ -609,7 +620,7 @@ void describe('statistics, market and leaderboard', () => {
     assert.deepEqual(Object.keys(mapStats['users'] as object), ['bob']);
   });
 
-  void it('hides order owners and converts prices', async () => {
+  void it('returns public order owners and converted prices without changing ownership filters', async () => {
     const { state, context } = harness();
     state.world.marketOrders['o1'] = {
       _id: 'o1',
@@ -629,6 +640,7 @@ void describe('statistics, market and leaderboard', () => {
     assert.deepEqual(orders['list'], [
       {
         _id: 'o1',
+        user: 'bob',
         active: true,
         type: 'sell',
         amount: 10,
@@ -639,6 +651,8 @@ void describe('statistics, market and leaderboard', () => {
     ]);
     const mine = await call(context, 'GET', '/api/game/market/my-orders', { user: 'bob' });
     assert.equal((mine['list'] as Array<Record<string, unknown>>)[0]?.['user'], 'bob');
+    const others = await call(context, 'GET', '/api/game/market/my-orders', { user: 'alice' });
+    assert.deepEqual(others['list'], []);
     const index = await call(context, 'GET', '/api/game/market/orders-index', { user: 'alice' });
     assert.deepEqual(index['list'], [{ _id: 'energy', count: 1, buying: 0, selling: 1 }]);
   });

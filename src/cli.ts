@@ -1,24 +1,27 @@
 #!/usr/bin/env node
 /*
- * Operator command line: `init` and `start` run on the server host against the SQLite world;
- * every other command is a typed request to the authenticated `POST /admin` API of a running
- * server. Secrets (admin token, passwords) are never printed.
+ * Operator command line: `init` and `start` run on the server host against the world database (a
+ * SQLite file, or PostgreSQL with a database URL); every other command is a typed request to the
+ * authenticated `POST /admin` API of a running server. Secrets (admin token, passwords, database
+ * credentials) are never printed.
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { open, readFile, rename, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
+import { loadBotModules, type JsonObject, type JsonValue } from '@openscreeps/game';
 import { isRecord } from './api/guards.ts';
 import { createUser } from './api/users.ts';
 import { configFromEnvironment, createConfig } from './config.ts';
-import type { JsonObject, JsonValue, ServerConfig, ServerState } from './contracts.ts';
-import { ServerKernel } from './kernel.ts';
+import type { ServerConfig, ServerState } from './contracts.ts';
+import { databaseLabel } from './database.ts';
+import { ServerKernel } from './services/server-kernel.service.ts';
+import { StateStore } from './services/state-store.service.ts';
 import { createServer, type RunningServer } from './server.ts';
-import { loadBotModules } from './world/index.ts';
 
 const PROGRAM = 'openscreeps-server';
 const MINIMUM_TOKEN_LENGTH = 32;
@@ -72,7 +75,12 @@ const SERVER_OPTIONS: OptionTable = {
   database: {
     type: 'string',
     value: 'FILE',
-    help: 'SQLite world database (SCREEPS_DATABASE; default data/world.sqlite)',
+    help: 'SQLite world; with a database URL only the token file base (SCREEPS_DATABASE; default data/world.sqlite)',
+  },
+  'database-url': {
+    type: 'string',
+    value: 'URL',
+    help: 'PostgreSQL world postgres://...; replaces the SQLite world (prefer SCREEPS_DATABASE_URL)',
   },
   'world-size': {
     type: 'string',
@@ -252,6 +260,8 @@ function readAdminTokenFile(file: string): string | undefined {
 
 /** Creates a fresh owner-only token file; `false` when one already exists (never overwritten). */
 function createAdminTokenFile(file: string): boolean {
+  // A PostgreSQL world creates no SQLite file, so its directory may not exist yet.
+  mkdirSync(dirname(file), { recursive: true });
   try {
     writeFileSync(file, `${randomBytes(32).toString('base64url')}\n`, { flag: 'wx', mode: 0o600 });
     return true;
@@ -270,6 +280,8 @@ function serverOverrides(input: Invocation): Partial<ServerConfig> {
   if (port !== undefined) overrides.port = port;
   const database = stringOption(input, 'database');
   if (database !== undefined) overrides.database = resolve(database);
+  const databaseUrl = stringOption(input, 'database-url');
+  if (databaseUrl !== undefined) overrides.databaseUrl = databaseUrl;
   const worldSize = integerOption(input, 'world-size');
   if (worldSize !== undefined) overrides.worldSize = worldSize;
   const seed = integerOption(input, 'seed');
@@ -325,33 +337,50 @@ async function initialize(input: Invocation): Promise<void> {
   if (username !== undefined && password === undefined) {
     throw new UsageError('--username requires SCREEPS_INITIAL_PASSWORD or --password');
   }
-  const database = config.database;
-  if (existsSync(database)) {
+  const database = databaseLabel(config);
+  const sqlite = config.databaseUrl === undefined;
+  if (sqlite && existsSync(config.database)) {
     throw new Error(`Database ${database} already exists; init never replaces a world`);
   }
-  const tokenFile = adminTokenPath(database);
+  const tokenFile = adminTokenPath(config.database);
   // Validate a pre-existing token file before creating anything.
   if (config.adminToken === undefined) readAdminTokenFile(tokenFile);
 
-  let summary: string;
-  let kernel: ServerKernel | undefined;
+  // Build the world and player in memory, so the database receives one complete first commit.
+  const draftConfig: ServerConfig = { ...config, database: ':memory:' };
+  delete draftConfig.databaseUrl;
+  const draft = await ServerKernel.create(draftConfig);
+  let state: ServerState;
   try {
-    kernel = new ServerKernel(config);
-    const opened = kernel;
     if (username !== undefined && password !== undefined) {
-      await opened.mutate(() => {
-        createUser(opened, { username, password });
+      await draft.mutate(() => {
+        createUser(draft, { username, password });
       });
     }
-    summary = await opened.read(() => worldSummary(opened.state));
-    await opened.close();
-  } catch (error) {
-    try {
-      await kernel?.close();
-    } finally {
-      await removeDatabaseFiles(database);
+    state = await draft.exportSnapshot();
+  } finally {
+    await draft.close();
+  }
+
+  let summary: string | undefined;
+  try {
+    const store = await StateStore.open(config);
+    if (store.load() === undefined) {
+      const kernel = await ServerKernel.create(config, { state }, store);
+      try {
+        summary = await kernel.read(() => worldSummary(kernel.state));
+      } finally {
+        await kernel.close();
+      }
+    } else {
+      await store.close();
     }
+  } catch (error) {
+    if (sqlite) await removeDatabaseFiles(config.database);
     throw error;
+  }
+  if (summary === undefined) {
+    throw new Error(`Database ${database} already exists; init never replaces a world`);
   }
   print(`Initialized world ${database} (shard ${config.shardName}): ${summary}`);
   if (username !== undefined) print(`Created player "${username}"`);
@@ -410,7 +439,7 @@ export async function startServer(input: Invocation): Promise<RunningServer> {
     }
     const summary = await server.kernel.read(() => worldSummary(server.kernel.state));
     print(`OpenScreeps server listening on ${listenUrl(server.address)}`);
-    print(`World ${config.database} (shard ${config.shardName}): ${summary}`);
+    print(`World ${databaseLabel(config)} (shard ${config.shardName}): ${summary}`);
     print(
       adminToken === undefined
         ? `Admin API disabled: set SCREEPS_ADMIN_TOKEN or run init to create ${tokenFile}`

@@ -13,6 +13,19 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@openscreeps/engine', '@openscreeps/engine/*'],
+              message: 'Server integrations use @openscreeps/game; the game owns its engine.',
+            },
+          ],
+        },
+      ],
+      // Nest modules can be declarative classes whose behavior is supplied by decorators.
+      '@typescript-eslint/no-extraneous-class': ['error', { allowWithDecorator: true }],
     },
   },
   prettier,

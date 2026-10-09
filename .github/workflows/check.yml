@@ -15,3 +15,26 @@ jobs:
       - uses: jdx/mise-action@v3
       - run: npm ci
       - run: npm run check
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: openscreeps
+          POSTGRES_PASSWORD: openscreeps
+          POSTGRES_DB: openscreeps
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openscreeps -d openscreeps"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SCREEPS_TEST_DATABASE_URL: postgresql://openscreeps:openscreeps@localhost:5432/openscreeps
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+      - run: npm ci
+      - run: node --import tsx --test test/persistence.test.ts

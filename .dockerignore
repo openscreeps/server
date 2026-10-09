@@ -1,0 +1,11 @@
+# Allow-list: only the sources the image build needs. Host node_modules/dist (possibly built for
+# another platform), worlds under data/, .env secrets, .git and .reference never enter the context.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!reference-versions.json

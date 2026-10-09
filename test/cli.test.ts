@@ -253,6 +253,58 @@ void describe('administration over HTTP', () => {
     await admin('bot', 'remove', 'SimpleBot');
   });
 
+  void it('keeps room lifecycle state aligned with the game contract', async () => {
+    const room = 'W50N50';
+    const userId = await server.kernel.mutate(() => {
+      const userId = 'room-lifecycle-user';
+      const { state } = server.kernel;
+      state.world.users[userId] = { _id: userId, username: 'RoomLifecycle', rooms: [room] };
+      state.world.rooms[room] = { _id: room, status: 'out of borders' };
+      state.world.terrain[room] = '0'.repeat(2500);
+      state.world.roomObjects['room-lifecycle-object'] = {
+        _id: 'room-lifecycle-object',
+        type: 'controller',
+        room,
+        x: 25,
+        y: 25,
+        level: 0,
+      };
+      state.world.flags['room-lifecycle-flag'] = {
+        _id: 'room-lifecycle-flag',
+        user: userId,
+        room,
+        data: 'F~1~1~10~10',
+      };
+      state.world.roomEventLogs[room] = [];
+      state.pendingIntents = { ...state.pendingIntents, [room]: { [userId]: { room: {} } } };
+      server.kernel.terrainChanged();
+      return userId;
+    });
+    const active = [...server.kernel.state.world.activeRooms];
+    await admin('room', 'open', room);
+    assert.equal(server.kernel.state.world.rooms[room]?.status, 'normal');
+    assert.deepEqual(server.kernel.state.world.activeRooms, active);
+    await admin('room', 'close', room);
+    assert.equal(server.kernel.state.world.rooms[room].status, 'out of borders');
+    await server.kernel.mutate(() => {
+      server.kernel.state.world.activeRooms.push(room);
+    });
+    await admin('room', 'remove', room);
+    const { state } = server.kernel;
+    assert.equal(Object.hasOwn(state.world.rooms, room), false);
+    assert.equal(Object.hasOwn(state.world.terrain, room), false);
+    assert.equal(Object.hasOwn(state.world.roomObjects, 'room-lifecycle-object'), false);
+    assert.equal(Object.hasOwn(state.world.flags, 'room-lifecycle-flag'), false);
+    assert.equal(Object.hasOwn(state.pendingIntents, room), false);
+    assert.deepEqual(state.world.users[userId]?.rooms, [room]);
+    assert.equal(state.world.activeRooms.includes(room), true);
+    assert.deepEqual(state.world.roomEventLogs[room], []);
+    await admin('room', 'open', room);
+    await admin('room', 'close', room);
+    assert.equal(Object.hasOwn(server.kernel.state.world.rooms, room), false);
+    await assert.rejects(admin('room', 'remove', room), /HTTP 400/);
+  });
+
   void it('exports and imports durable snapshots', async () => {
     const file = join(root, 'snapshot.json');
     await admin('snapshot', 'export', file);

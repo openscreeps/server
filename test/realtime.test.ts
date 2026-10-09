@@ -8,7 +8,7 @@ import {
   createWorldState,
   type UserRunResult,
   type WorldState,
-} from '@openscreeps/engine';
+} from '@openscreeps/game';
 import SockJS from 'sockjs-client';
 import { createAuthService } from '../src/api/auth.ts';
 import { setUserPassword } from '../src/api/users.ts';
@@ -233,6 +233,7 @@ function harness(): Harness {
           ),
         },
         timestamp: Date.now(),
+        maintenance: { ran: [], errors: [], notifications: [] },
       };
       context.events.emit('tick', event);
       return processed + 1;

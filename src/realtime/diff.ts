@@ -26,8 +26,8 @@
  * 2012-2015 The Dojo Foundation, used under the MIT license (see THIRD_PARTY_NOTICES.md).
  */
 
+import type { JsonObject, JsonValue } from '@openscreeps/game';
 import { isRecord } from '../api/guards.ts';
-import type { JsonObject, JsonValue } from '../contracts.ts';
 
 type JsonContainer = JsonObject | JsonValue[];
 

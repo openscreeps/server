@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { afterEach, describe, it, mock } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { gunzipSync } from 'node:zlib';
-import { BotRuntime, createWorldState } from '@openscreeps/engine';
-import { accountRoutes } from '../src/api/accounts.ts';
+import { BotRuntime, createWorldState } from '@openscreeps/game';
+import { ApiTestClient, type ApiCallOptions } from './api-harness.ts';
 import { createAuthService } from '../src/api/auth.ts';
 import { isRecord } from '../src/api/guards.ts';
 import { createUser } from '../src/api/users.ts';
@@ -16,22 +16,18 @@ import {
   ApiError,
   RawResponse,
   type ApiContext,
-  type ApiRequest,
   type ServerConfig,
   type ServerEvents,
   type ServerState,
 } from '../src/contracts.ts';
-import { StateStore } from '../src/storage.ts';
+import { StateStore } from '../src/services/state-store.service.ts';
+import { STEAM_NEWS_TTL_MS } from '../src/services/steam-news.ts';
 
 interface Harness {
   context: ApiContext;
   published: Array<[channel: string, data: unknown]>;
   clock: { now: number };
-  call(
-    method: 'GET' | 'POST',
-    path: string,
-    options?: { body?: Record<string, unknown>; query?: Record<string, string>; token?: string },
-  ): Promise<unknown>;
+  call(method: 'GET' | 'POST', path: string, options?: ApiCallOptions): Promise<unknown>;
 }
 
 const runtimes: BotRuntime[] = [];
@@ -80,7 +76,12 @@ function harness(
     events: new EventEmitter<ServerEvents>(),
     now: () => clock.now,
     read: async <T>(operation: () => T | Promise<T>) => operation(),
-    mutate: async <T>(operation: () => T | Promise<T>) => operation(),
+    mutate: async <T>(operation: () => T | Promise<T>) => {
+      const result = await operation();
+      // Commit: the persisted runtime snapshot is taken from the live runtime.
+      state.runtime = runtime.snapshot();
+      return result;
+    },
     publish: (channel: string, data: unknown) => {
       published.push([channel, data]);
     },
@@ -90,26 +91,12 @@ function harness(
     setTickDuration: () => Promise.resolve(),
   };
   const context: ApiContext = { ...base, auth: createAuthService(base) };
+  const client = new ApiTestClient(context);
   return {
     context,
     published,
     clock,
-    // Mirrors the dispatcher: prepare outside the lock, then token check + handler.
-    async call(method, path, { body = {}, query = {}, token } = {}) {
-      const route = accountRoutes.find((entry) => entry.method === method && entry.path === path);
-      assert.ok(route, `${method} ${path} is routed`);
-      const request: ApiRequest = { query: new URLSearchParams(query), body, headers: {} };
-      if (route.prepare) request.prepared = await route.prepare(request, context);
-      if (route.auth) {
-        const userId = token === undefined ? undefined : context.auth.check(token);
-        if (userId === undefined) throw new ApiError('unauthorized', 401);
-        request.userId = userId;
-      }
-      const result = await route.handle(request, context);
-      // Commit: the persisted runtime snapshot is taken from the live runtime.
-      state.runtime = runtime.snapshot();
-      return result;
-    },
+    call: (method, path, callOptions) => client.call(method, path, callOptions),
   };
 }
 
@@ -222,7 +209,6 @@ void describe('account authentication', () => {
         modules: { main: '' },
         activeWorld: true,
         activeSim: true,
-        timestamp: h.clock.now,
       },
     );
     assert.deepEqual(h.context.runtime.getCode(user._id), {
@@ -230,6 +216,50 @@ void describe('account authentication', () => {
       branch: 'default',
     });
     assert.equal(h.context.runtime.getMemory(user._id), '{}');
+  });
+
+  void it('returns money history dates as ISO strings without changing numeric world logs', async () => {
+    const h = harness();
+    const alice = signIn(h, 'Alice');
+    const bob = signIn(h, 'Bob');
+    const entries = Array.from({ length: 21 }, (_, index) => ({
+      _id: `money-${String(index)}`,
+      user: alice.userId,
+      date: h.clock.now - index * 1000,
+      tick: 100 - index,
+      type: 'market.sell',
+      balance: 1000,
+      change: 10,
+      market: { resourceType: 'energy', amount: 10, price: 1 },
+    }));
+    for (const entry of entries) h.context.state.world.usersMoney[entry._id] = entry;
+    const first = entries[0];
+    assert.ok(first);
+    h.context.state.world.usersMoney['foreign'] = {
+      ...first,
+      _id: 'foreign',
+      user: bob.userId,
+      date: h.clock.now + 1000,
+    };
+    const wire = entries.map((entry) => ({
+      ...entry,
+      date: new Date(entry.date).toISOString(),
+    }));
+    assert.deepEqual(await h.call('GET', '/api/user/money-history', { token: alice.token }), {
+      page: 0,
+      list: wire.slice(0, 20),
+      hasMore: true,
+    });
+    assert.deepEqual(
+      await h.call('GET', '/api/user/money-history', {
+        token: alice.token,
+        query: { page: '1' },
+      }),
+      { page: 1, list: wire.slice(20), hasMore: false },
+    );
+    for (const entry of entries) {
+      assert.equal(h.context.state.world.usersMoney[entry._id]?.date, entry.date);
+    }
   });
 });
 
@@ -337,6 +367,75 @@ void describe('steam ticket authentication', () => {
   });
 });
 
+void describe('official client platform endpoints', () => {
+  const appnews = {
+    appid: 464350,
+    newsitems: [{ gid: '1842212951300141', title: 'Season #11 starts on September 1' }],
+    count: 143,
+  };
+
+  void it('relays the latest Steam announcement and shares one request per poll interval', async () => {
+    const h = harness();
+    const fetchMock = mock.method(globalThis, 'fetch', () =>
+      Promise.resolve(new Response(JSON.stringify({ appnews }))),
+    );
+    const [first, concurrent] = await Promise.all([
+      h.call('GET', '/api/steam/news'),
+      h.call('GET', '/api/steam/news'),
+    ]);
+    assert.deepEqual(first, { appnews });
+    assert.deepEqual(concurrent, { appnews });
+    assert.equal(fetchMock.mock.callCount(), 1);
+
+    h.clock.now += STEAM_NEWS_TTL_MS - 1;
+    await h.call('GET', '/api/steam/news');
+    assert.equal(fetchMock.mock.callCount(), 1);
+    h.clock.now += 1;
+    await h.call('GET', '/api/steam/news');
+    assert.equal(fetchMock.mock.callCount(), 2);
+  });
+
+  void it('reports unavailable Steam news without caching the failure', async () => {
+    const h = harness();
+    for (const reply of [
+      () => Promise.resolve(new Response(JSON.stringify({ appnews }), { status: 503 })),
+      () => Promise.resolve(new Response(JSON.stringify({ appnews: { appid: 464350 } }))),
+      () => Promise.resolve(new Response('not json')),
+      () => Promise.reject(new Error('network down')),
+    ]) {
+      mock.method(globalThis, 'fetch', reply);
+      await rejects(h.call('GET', '/api/steam/news'), 'steam news unavailable', 502);
+      mock.restoreAll();
+    }
+    mock.method(globalThis, 'fetch', () =>
+      Promise.resolve(new Response(JSON.stringify({ appnews }))),
+    );
+    assert.deepEqual(await h.call('GET', '/api/steam/news'), { appnews });
+  });
+
+  void it('reports no Xsolla promotion or decorations without that inventory', async () => {
+    const h = harness();
+    const fetchMock = mock.method(globalThis, 'fetch', () => Promise.reject(new Error('unused')));
+    const { token } = signIn(h);
+    const callers: ApiCallOptions[] = [{}, { token }];
+    for (const options of callers) {
+      assert.deepEqual(await h.call('GET', '/api/xsolla/active-promotion', options), {});
+      assert.deepEqual(
+        await h.call('GET', '/api/game/room-decorations', {
+          ...options,
+          query: { room: 'W1N1', shard: 'shard0' },
+        }),
+        { decorations: [] },
+      );
+    }
+    assert.equal(fetchMock.mock.callCount(), 0);
+    for (const path of ['/api/user/decorations/inventory', '/api/user/decorations/themes']) {
+      await rejects(h.call('GET', path), 'unauthorized', 401);
+      assert.deepEqual(await h.call('GET', path, { token }), { list: [] });
+    }
+  });
+});
+
 void describe('code branches', () => {
   void it('keeps the runtime code equal to the activeWorld branch', async () => {
     const h = harness();
@@ -373,6 +472,13 @@ void describe('code branches', () => {
       token,
       body: { branch: 'default', newName: 'next' },
     });
+    const cloned = Object.values(h.context.state.branches).find(
+      (branch) => branch.branch === 'next',
+    );
+    assert.ok(cloned);
+    assert.equal(Object.hasOwn(cloned, 'activeWorld'), false);
+    assert.equal(Object.hasOwn(cloned, 'activeSim'), false);
+    assert.equal(cloned.timestamp, h.clock.now);
     await h.call('POST', '/api/user/code', {
       token,
       body: { branch: 'next', modules: { main: 'next();' } },
@@ -402,7 +508,7 @@ void describe('code branches', () => {
     );
 
     const list = (await h.call('GET', '/api/user/branches', { token })) as {
-      list: Array<{ branch: string; activeWorld: boolean; activeSim: boolean }>;
+      list: Array<{ branch: string; activeWorld?: boolean; activeSim?: boolean }>;
     };
     assert.deepEqual(
       list.list
@@ -617,12 +723,12 @@ void describe('persistence', () => {
           },
         },
       });
-      const store = new StateStore(database);
-      store.save(h.context.state);
-      store.close();
-      const reopened = new StateStore(database);
+      const store = await StateStore.open(createConfig({ database }));
+      await store.save(h.context.state);
+      await store.close();
+      const reopened = await StateStore.open(createConfig({ database }));
       const state = reopened.load();
-      reopened.close();
+      await reopened.close();
       assert.ok(state);
       const restarted = harness({ state, now: h.clock.now });
       assert.equal(restarted.context.auth.check(token), userId);
