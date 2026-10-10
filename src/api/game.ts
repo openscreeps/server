@@ -1,142 +1,138 @@
-import { Controller, Get, Inject, Post, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Controller, Inject, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { ApiRequest } from '../contracts.ts';
 import { GameService } from '../services/game.ts';
-import { ApiGuard, ApiInput, ApiInterceptor, ApiPolicy } from './transport.ts';
+import { ApiOperation } from './operations.ts';
+import { ApiGuard, ApiInput, ApiInterceptor } from './transport.ts';
 
-@Controller('api/game')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class GameController {
   constructor(@Inject(GameService) readonly service: GameService) {}
 
-  @Post('map-stats')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('gameMapStats', { auth: true })
   mapStats(@ApiInput() request: ApiRequest) {
     return this.service.mapStats(request);
   }
 
-  @Get('time')
-  @ApiPolicy()
+  @ApiOperation('gameTime')
   time() {
     return this.service.time();
   }
 
-  @Get('tick')
-  @ApiPolicy()
+  @ApiOperation('gameTick')
   tick() {
     return this.service.tick();
   }
 
-  @Get('world-size')
-  @ApiPolicy()
+  @ApiOperation('gameWorldSize')
   worldSize() {
     return this.service.worldSize();
   }
 
-  @Get('room-terrain')
-  @ApiPolicy()
+  @ApiOperation('gameRoomTerrain')
   roomTerrain(@ApiInput() request: ApiRequest) {
     return this.service.roomTerrain(request);
   }
 
-  @Post('rooms')
-  @ApiPolicy()
+  @ApiOperation('gameRooms')
   rooms(@ApiInput() request: ApiRequest) {
     return this.service.rooms(request);
   }
 
-  @Get('room-status')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('gameRoomStatus', { auth: true })
   roomStatus(@ApiInput() request: ApiRequest) {
     return this.service.roomStatus(request);
   }
 
-  @Get('room-overview')
-  @ApiPolicy({ auth: true })
+  /** Public like screeps.com: a supplied token is neither required nor refreshed. */
+  @ApiOperation('gameRoomObjects')
+  roomObjects(@ApiInput() request: ApiRequest) {
+    return this.service.roomObjects(request);
+  }
+
+  /** Public like room-objects: a supplied token is neither required nor refreshed. */
+  @ApiOperation('gameFindObject')
+  findObject(@ApiInput() request: ApiRequest) {
+    return this.service.findObject(request);
+  }
+
+  @ApiOperation('gameRandomNoviceRoom')
+  randomNoviceRoom() {
+    return this.service.randomNoviceRoom();
+  }
+
+  @ApiOperation('gameRoomOverview', { auth: true })
   roomOverview(@ApiInput() request: ApiRequest) {
     return this.service.roomOverview(request);
   }
 
-  @Post('gen-unique-object-name')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('gameGenUniqueObjectName', { auth: true })
   genUniqueObjectName(@ApiInput() request: ApiRequest) {
     return this.service.genUniqueObjectName(request);
   }
 
-  @Post('check-unique-object-name')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('gameCheckUniqueObjectName', { auth: true })
   checkUniqueObjectName(@ApiInput() request: ApiRequest) {
     return this.service.checkUniqueObjectName(request);
   }
 
-  @Post('place-spawn')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gamePlaceSpawn', { auth: true, write: true })
   placeSpawn(@ApiInput() request: ApiRequest) {
     return this.service.placeSpawn(request);
   }
 
-  @Post('create-construction')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameCreateConstruction', { auth: true, write: true })
   createConstruction(@ApiInput() request: ApiRequest) {
     return this.service.createConstruction(request);
   }
 
-  @Post('create-flag')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameCreateFlag', { auth: true, write: true })
   createFlag(@ApiInput() request: ApiRequest) {
     return this.service.createFlag(request);
   }
 
-  @Post('gen-unique-flag-name')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('gameGenUniqueFlagName', { auth: true })
   genUniqueFlagName(@ApiInput() request: ApiRequest) {
     return this.service.genUniqueFlagName(request);
   }
 
-  @Post('check-unique-flag-name')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('gameCheckUniqueFlagName', { auth: true })
   checkUniqueFlagName(@ApiInput() request: ApiRequest) {
     return this.service.checkUniqueFlagName(request);
   }
 
-  @Post('change-flag-color')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameChangeFlagColor', { auth: true, write: true })
   changeFlagColor(@ApiInput() request: ApiRequest) {
     return this.service.changeFlagColor(request);
   }
 
-  @Post('remove-flag')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameRemoveFlag', { auth: true, write: true })
   removeFlag(@ApiInput() request: ApiRequest) {
     return this.service.removeFlag(request);
   }
 
-  @Post('add-object-intent')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameAddObjectIntent', { auth: true, write: true })
   addObjectIntent(@ApiInput() request: ApiRequest) {
     return this.service.addObjectIntent(request);
   }
 
-  @Post('add-global-intent')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameAddGlobalIntent', { auth: true, write: true })
   addGlobalIntent(@ApiInput() request: ApiRequest) {
     return this.service.addGlobalIntent(request);
   }
 
-  @Post('set-notify-when-attacked')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameSetNotifyWhenAttacked', { auth: true, write: true })
   setNotifyWhenAttacked(@ApiInput() request: ApiRequest) {
     return this.service.setNotifyWhenAttacked(request);
   }
 
-  @Post('create-invader')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameCreateInvader', { auth: true, write: true })
   createInvader(@ApiInput() request: ApiRequest): ReturnType<GameService['createInvader']> {
     return this.service.createInvader(request);
   }
 
-  @Post('remove-invader')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('gameRemoveInvader', { auth: true, write: true })
   removeInvader(@ApiInput() request: ApiRequest) {
     return this.service.removeInvader(request);
   }

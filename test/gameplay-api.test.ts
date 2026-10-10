@@ -57,7 +57,21 @@ function harness(): { state: ServerState; context: ApiContext } {
     },
     users: {
       alice: { _id: 'alice', username: 'Alice', usernameLower: 'alice', cpu: 100, gcl: 0 },
-      bob: { _id: 'bob', username: 'Bob', usernameLower: 'bob', cpu: 100, gcl: 5000, badge: {} },
+      bob: {
+        _id: 'bob',
+        username: 'Bob',
+        usernameLower: 'bob',
+        cpu: 100,
+        gcl: 5000,
+        badge: {
+          type: 1,
+          color1: '#ff0000',
+          color2: '#00ff00',
+          color3: '#0000ff',
+          param: 0,
+          flip: false,
+        },
+      },
       '2': { _id: '2', username: 'Invader', usernameLower: 'invader' },
     },
     roomObjects: Object.fromEntries([
@@ -601,7 +615,17 @@ void describe('statistics, market and leaderboard', () => {
       user: 'alice',
       query: { room: 'W2N1', interval: '8' },
     });
-    assert.deepEqual(overview['owner'], { username: 'Bob', badge: {} });
+    assert.deepEqual(overview['owner'], {
+      username: 'Bob',
+      badge: {
+        type: 1,
+        color1: '#ff0000',
+        color2: '#00ff00',
+        color3: '#0000ff',
+        param: 0,
+        flip: false,
+      },
+    });
     const stats = overview['stats'] as Record<string, Array<{ value: number; endTime: number }>>;
     assert.equal(stats['energyHarvested']?.length, 8);
     assert.deepEqual(stats['energyHarvested'].slice(-2), [

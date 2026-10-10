@@ -12,7 +12,7 @@ export class HostService {
     @Inject(ServerKernel) readonly kernel: ServerKernel,
   ) {}
 
-  version(): unknown {
+  version() {
     const { context } = this;
     return {
       protocol: 14,
@@ -31,7 +31,7 @@ export class HostService {
     };
   }
 
-  history(room: string, base: number): Promise<unknown> {
+  history(room: string, base: number) {
     return this.context.read(() => {
       const frames = this.context.state.history[room] ?? [];
       const index = frames.findIndex((frame) => frame.time === base);
@@ -46,11 +46,11 @@ export class HostService {
     });
   }
 
-  async health(): Promise<unknown> {
+  async health() {
     if (!this.kernel.healthy) throw new ApiError('server unavailable', 503);
     try {
       return await this.context.read(() => ({
-        ok: 1,
+        ok: 1 as const,
         time: this.context.state.world.gameTime,
         paused: this.context.state.paused,
       }));

@@ -14,25 +14,53 @@ import { requireUser, type ApiContext, type ApiRequest } from '../contracts.ts';
 import { stringParam } from '../api/gameplay-support.ts';
 import { isRecord } from '../api/guards.ts';
 import { SERVER_CONTEXT } from '../api/transport.ts';
+import type { ApiOperationResult } from '../api/operations.ts';
+
+/** Spawned room-object overlays must retain the account document's required public fields. */
+function assertPowerView(
+  creep: PowerCreepDoc | SpawnedPowerCreep,
+): asserts creep is PowerCreepDoc & { className: 'operator' } {
+  if (
+    creep.className !== 'operator' ||
+    typeof creep.user !== 'string' ||
+    typeof creep.name !== 'string' ||
+    typeof creep.level !== 'number' ||
+    typeof creep.hitsMax !== 'number' ||
+    creep.store === undefined ||
+    typeof creep.storeCapacity !== 'number' ||
+    (creep.spawnCooldownTime !== null && typeof creep.spawnCooldownTime !== 'number') ||
+    creep.powers === undefined
+  ) {
+    throw new Error('Invalid power creep account projection');
+  }
+}
+
+function assertPowerViews(
+  creeps: Array<PowerCreepDoc | SpawnedPowerCreep>,
+): asserts creeps is Array<PowerCreepDoc & { className: 'operator' }> {
+  for (const creep of creeps) assertPowerView(creep);
+}
 
 /** HTTP adapter of the game's power creep account operations. */
 @Injectable()
 export class PowerService {
   constructor(@Inject(SERVER_CONTEXT) readonly context: ApiContext) {}
 
-  list(request: ApiRequest): {
-    list: Array<PowerCreepDoc | SpawnedPowerCreep>;
-  } {
+  list(request: ApiRequest): ApiOperationResult<'powerCreepsList'> {
     const user = requireUser(request, this.context);
-    return { list: listPowerCreeps(this.context.state.world, user._id) };
+    const list = listPowerCreeps(this.context.state.world, user._id);
+    assertPowerViews(list);
+    return { list };
   }
 
-  create(request: ApiRequest): PowerCreepDoc {
+  create(request: ApiRequest): ApiOperationResult<'powerCreepsCreate'> {
     const user = requireUser(request, this.context);
-    return createPowerCreep(this.context.state, user._id, {
+    const creep = createPowerCreep(this.context.state, user._id, {
       className: stringParam(request.body['className']),
       name: request.body['name'],
     });
+    assertPowerView(creep);
+    return creep;
   }
 
   delete(request: ApiRequest) {

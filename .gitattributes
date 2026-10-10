@@ -1,1 +1,4 @@
 * text=auto eol=lf
+api/openapi.json linguist-generated
+api/openapi.yaml linguist-generated
+src/generated/** linguist-generated

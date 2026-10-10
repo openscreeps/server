@@ -15,6 +15,7 @@ import {
   type ServerContext,
   type UserMessage,
 } from '../contracts.ts';
+import { publicUsers } from '../api/gameplay-support.ts';
 import { SERVER_CONTEXT } from '../api/transport.ts';
 
 const MAX_TEXT_LENGTH = 100 * 1024;
@@ -112,16 +113,7 @@ export class MessagesService {
       if (!latest.has(message.respondent)) latest.set(message.respondent, message);
     }
     const messages = [...latest].map(([_id, message]) => ({ _id, message }));
-    const users: Record<string, { _id: string; username?: string; badge?: unknown }> = {};
-    for (const id of latest.keys()) {
-      const respondent = this.context.state.world.users[id];
-      if (!respondent) continue;
-      const info: { _id: string; username?: string; badge?: unknown } = { _id: id };
-      if (respondent.username !== undefined) info.username = respondent.username;
-      if (respondent.badge !== undefined) info.badge = respondent.badge;
-      users[id] = info;
-    }
-    return { messages, users };
+    return { messages, users: publicUsers(this.context.state.world, latest.keys()) };
   }
 
   markRead(request: ApiRequest) {

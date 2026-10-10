@@ -1,40 +1,36 @@
-import { Controller, Get, Inject, Post, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Controller, Inject, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { ApiRequest } from '../contracts.ts';
 import { MessagesService } from '../services/messages.ts';
-import { ApiGuard, ApiInput, ApiInterceptor, ApiPolicy } from './transport.ts';
+import { ApiOperation } from './operations.ts';
+import { ApiGuard, ApiInput, ApiInterceptor } from './transport.ts';
 
-@Controller('api/user/messages')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class MessagesController {
   constructor(@Inject(MessagesService) readonly service: MessagesService) {}
 
-  @Post('send')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('userMessagesSend', { auth: true, write: true })
   send(@ApiInput() request: ApiRequest) {
     return this.service.send(request);
   }
 
-  @Get('list')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('userMessagesList', { auth: true })
   list(@ApiInput() request: ApiRequest) {
     return this.service.list(request);
   }
 
-  @Get('index')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('userMessagesIndex', { auth: true })
   index(@ApiInput() request: ApiRequest) {
     return this.service.index(request);
   }
 
-  @Post('mark-read')
-  @ApiPolicy({ auth: true, write: true })
+  @ApiOperation('userMessagesMarkRead', { auth: true, write: true })
   markRead(@ApiInput() request: ApiRequest) {
     return this.service.markRead(request);
   }
 
-  @Get('unread-count')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('userMessagesUnreadCount', { auth: true })
   unreadCount(@ApiInput() request: ApiRequest) {
     return this.service.unreadCount(request);
   }

@@ -1,34 +1,31 @@
-import { Controller, Get, Inject, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Controller, Inject, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { ApiRequest } from '../contracts.ts';
 import { MarketService } from '../services/market.ts';
-import { ApiGuard, ApiInput, ApiInterceptor, ApiPolicy } from './transport.ts';
+import { ApiOperation } from './operations.ts';
+import { ApiGuard, ApiInput, ApiInterceptor } from './transport.ts';
 
-@Controller('api/game/market')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class MarketController {
   constructor(@Inject(MarketService) readonly service: MarketService) {}
 
-  @Get('orders-index')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('marketOrdersIndex', { auth: true })
   ordersIndex() {
     return this.service.ordersIndex();
   }
 
-  @Get('orders')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('marketOrders', { auth: true })
   orders(@ApiInput() request: ApiRequest) {
     return this.service.orders(request);
   }
 
-  @Get('my-orders')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('marketMyOrders', { auth: true })
   myOrders(@ApiInput() request: ApiRequest) {
     return this.service.myOrders(request);
   }
 
-  @Get('stats')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('marketStats', { auth: true })
   stats(@ApiInput() request: ApiRequest): ReturnType<MarketService['stats']> {
     return this.service.stats(request);
   }

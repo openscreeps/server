@@ -11,13 +11,21 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./client": {
+      "types": "./dist/generated/api/index.d.ts",
+      "import": "./dist/generated/api/index.js"
+    },
+    "./openapi.json": "./api/openapi.json",
+    "./openapi.yaml": "./api/openapi.yaml"
   },
   "bin": {
     "openscreeps-server": "./dist/cli.js"
   },
   "files": [
     "dist",
+    "api/openapi.json",
+    "api/openapi.yaml",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "reference-versions.json"
@@ -25,6 +33,8 @@
   "scripts": {
     "start": "tsx src/cli.ts start",
     "cli": "tsx src/cli.ts",
+    "generate:api": "node scripts/generate-api.mjs",
+    "check:api": "node scripts/generate-api.mjs --check",
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
@@ -32,7 +42,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node --import tsx --test test/**/*.test.ts",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build"
+    "check": "npm run check:api && npm run typecheck && npm run lint && npm run format:check && npm test && npm run build"
   },
   "license": "ISC",
   "dependencies": {
@@ -41,6 +51,7 @@
     "@nestjs/platform-express": "12.1.2",
     "@nestjs/typeorm": "12.0.2",
     "@openscreeps/game": "github:openscreeps/game#fd9cde57de20a1e37a0108c46ca78314c8b9bc36",
+    "@openscreeps/openapi": "github:openscreeps/openapi#1cf3725ab8df0b61028ae3177750217430abb818",
     "better-sqlite3": "13.0.3",
     "express": "5.2.1",
     "pg": "8.23.1",
@@ -55,7 +66,8 @@
     "esbuild@0.28.2": true,
     "isolated-vm@7.0.1": true,
     "github:openscreeps/engine#55883bef45d0d1c3c8c16e497fca56fe0b43ff11": true,
-    "github:openscreeps/game#fd9cde57de20a1e37a0108c46ca78314c8b9bc36": true
+    "github:openscreeps/game#fd9cde57de20a1e37a0108c46ca78314c8b9bc36": true,
+    "github:openscreeps/openapi#1cf3725ab8df0b61028ae3177750217430abb818": true
   },
   "overrides": {
     "typeorm": {
@@ -71,6 +83,8 @@
     "@types/pngjs": "6.0.5",
     "@types/sockjs": "0.3.36",
     "@types/sockjs-client": "1.5.4",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
     "lodash": "3.10.1",
@@ -78,6 +92,7 @@
     "sockjs-client": "1.6.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.71.1"
+    "typescript-eslint": "8.71.1",
+    "yaml": "2.9.1"
   }
 }

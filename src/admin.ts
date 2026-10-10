@@ -7,13 +7,11 @@
 import {
   Body,
   Controller,
-  Get,
   HttpCode,
   HttpException,
   HttpStatus,
   Inject,
   Injectable,
-  Post,
   UseGuards,
   type CanActivate,
   type ExecutionContext,
@@ -21,6 +19,7 @@ import {
 import { GameError } from '@openscreeps/game';
 import type { Request, Response } from 'express';
 import { ApiError, type ApiContext } from './contracts.ts';
+import { Operation, type OperationResult } from './api/operations.ts';
 import { SERVER_CONTEXT, secretsEqual } from './api/transport.ts';
 import { AdminService, invalid } from './services/admin.service.ts';
 
@@ -47,19 +46,19 @@ export class AdminGuard implements CanActivate {
   }
 }
 
-@Controller('admin')
+@Controller()
 @UseGuards(AdminGuard)
 export class AdminController {
   constructor(@Inject(AdminService) readonly admin: AdminService) {}
 
-  @Get('status')
-  async status(): Promise<Record<string, unknown>> {
+  @Operation('adminStatus')
+  async status(): Promise<OperationResult<'adminStatus'>> {
     return { ok: 1, ...(await adminErrors(() => this.admin.status())) };
   }
 
-  @Post()
+  @Operation('adminCommand')
   @HttpCode(200)
-  async command(@Body() body: unknown): Promise<Record<string, unknown>> {
+  async command(@Body() body: unknown): Promise<OperationResult<'adminCommand'>> {
     return { ok: 1, ...(await adminErrors(() => this.admin.execute(body))) };
   }
 }

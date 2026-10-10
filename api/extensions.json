@@ -1,0 +1,1691 @@
+{
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "platformRoot",
+        "summary": "Read standalone landing page",
+        "description": "OpenScreeps static landing page for game clients.",
+        "tags": ["Platform"],
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "HTML landing page.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-sources": [
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/http.ts#L29-L37"
+        ]
+      }
+    },
+    "/admin": {
+      "post": {
+        "operationId": "adminCommand",
+        "summary": "Execute an administrative command",
+        "description": "OpenScreeps-only operator command dispatch. Unknown fields are rejected; each mutation is serialized and durably committed. The request action discriminates the command shapes below. Several actions delete or replace world/player data, change resources or publish to players. Do not invoke them without explicit operator authorization. Domain validation failures use HTTP 400 here, not the gameplay HTTP-200 error envelope.",
+        "tags": ["Administration"],
+        "security": [
+          {
+            "AdminToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful administrative result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCommandResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "description": "Missing administrator bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin API disabled, wrong secret, or protected system user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Requested player, room or bot not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-sources": [
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/admin.ts#L27-L79",
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/services/admin.service.ts#L406-L669"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/status": {
+      "get": {
+        "operationId": "adminStatus",
+        "summary": "Read operator status",
+        "description": "OpenScreeps-only administrative endpoint. Requires the separately configured administrator bearer secret, never a player token. Disabled with 403 when no sufficiently long secret is configured.",
+        "tags": ["Administration"],
+        "security": [
+          {
+            "AdminToken": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful administrative result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "description": "Missing administrator bearer token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin API disabled, wrong secret, or protected system user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Requested player, room or bot not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-sources": [
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/admin.ts#L27-L64",
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/services/admin.service.ts#L355-L383"
+        ]
+      }
+    },
+    "/assets/{path}": {
+      "get": {
+        "operationId": "platformAsset",
+        "summary": "Read standalone client or terrain asset",
+        "description": "OpenScreeps wildcard asset route. map/W1N1.png renders room terrain at 150×150; map/zoom2/W0N0.png renders an aligned 4×4-room sector at 200×200. Other files come from the optional operator asset directory, with traversal and symlink containment checks. The path can contain slashes; some generated clients encode them, so preserve the wildcard path when using this endpoint.",
+        "tags": ["Platform"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "examples": ["map/W1N1.png"]
+            },
+            "description": "Relative wildcard asset path, potentially containing slash-delimited segments.",
+            "x-openscreeps-wildcard": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Asset bytes; content type follows the file extension.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-cache"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            },
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "description": "Asset not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-sources": [
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/http.ts#L59-L69",
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/assets.ts#L1-L10",
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/assets.ts#L137-L173"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "platformHealth",
+        "summary": "Read standalone server health",
+        "description": "OpenScreeps health probe. Returns the committed game time and pause state. An unhealthy kernel or failed read returns 503.",
+        "tags": ["Platform"],
+        "security": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful result or logical API failure. Inspect error even on HTTP 200.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "integer",
+                          "const": 1
+                        },
+                        "time": {
+                          "type": "integer"
+                        },
+                        "paused": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": ["ok", "time", "paused"],
+                      "additionalProperties": true
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "description": "Server unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "x-sources": [
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/http.ts#L54-L57",
+          "https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/services/host.service.ts#L49-L59"
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AdminToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "OpenScreeps administrator secret (at least 32 characters), distinct from all player tokens. Disabled unless SCREEPS_ADMIN_TOKEN is configured."
+      },
+      "Bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "OpenScreeps player-session alternative to X-Token (same session token). Successful authenticated responses rotate the token in the X-Token response header.",
+        "x-openscreeps-refresh-header": "X-Token"
+      }
+    },
+    "schemas": {
+      "AdminBotOptions": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]{3,}$"
+          },
+          "cpu": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "gcl": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "x": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 48
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 48
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "AdminCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "status"
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Read the same world/operator status returned by GET /admin/status."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "pause"
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Pause automatic ticks."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "resume"
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Resume automatic ticks."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "tick"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 1
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Advance 1–1000 real world ticks; returns completed tick count and game time."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "tick-duration"
+              },
+              "milliseconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3600000
+              }
+            },
+            "required": ["action", "milliseconds"],
+            "additionalProperties": false,
+            "description": "Set milliseconds between automatic ticks."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "user-create"
+              },
+              "username": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 64,
+                "pattern": "^[a-zA-Z0-9_-]{3,}$"
+              },
+              "password": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1024,
+                "writeOnly": true
+              },
+              "email": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 254,
+                "pattern": "^[\\w.+&-]+@[\\w.&-]+\\.[\\w.&-]{2,}$"
+              },
+              "steamId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20,
+                "pattern": "^[0-9]{1,20}$"
+              },
+              "cpu": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "gcl": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "cpuAvailable": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              }
+            },
+            "required": ["action", "username"],
+            "additionalProperties": false,
+            "description": "Create a player. gcl is raw control progress, not a room-count level. Username/account constraints also apply."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "user-update"
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "password": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 1024,
+                "writeOnly": true
+              },
+              "cpu": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "gcl": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "power": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "credits": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000000000000
+              },
+              "active": {
+                "type": "boolean"
+              },
+              "resources": {
+                "type": "object",
+                "description": "Only INTERSHARD_RESOURCES names accepted by the pinned engine. Zero removes an entry; others set the amount.",
+                "propertyNames": {
+                  "enum": ["token", "cpuUnlock", "pixel", "accessKey"]
+                },
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Update one non-system player selected by exactly one of userId or username. At least one changed field required. Credits are rounded to thousandths; gcl and power are raw progress totals. Zero resource amounts delete those entries.",
+            "oneOf": [
+              {
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": ["userId"]
+              },
+              {
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": ["username"]
+              }
+            ],
+            "minProperties": 3
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "user-remove"
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Destructive: remove player world state, credentials, sessions and server-private account records; revoke authentication. NPC/system accounts are protected.",
+            "oneOf": [
+              {
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": ["userId"]
+              },
+              {
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": ["username"]
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "room-generate"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              },
+              "options": {
+                "$ref": "#/components/schemas/AdminGenerateOptions"
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Generate a room and terrain; reject invalid domain geometry/options."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "room-open"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              },
+              "openTime": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8640000000000000
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Open a room now or at the given Unix-millisecond timestamp."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "room-close"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Close a room."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "room-remove"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Destructive: remove a room from the world."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "portal-create"
+              },
+              "from": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "unstableDate": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 8640000000000000
+                  },
+                  "decayTime": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": ["action", "from", "to"],
+            "additionalProperties": false,
+            "description": "Create a paired portal between rooms."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "terminal-create"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Create an NPC terminal in an existing room."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "bot-add"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_.-]+$"
+              },
+              "modules": {
+                "$ref": "#/components/schemas/AdminModules"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              },
+              "options": {
+                "$ref": "#/components/schemas/AdminBotOptions"
+              }
+            },
+            "required": ["action", "name", "modules", "room"],
+            "additionalProperties": false,
+            "description": "Add an inline-code bot in a room; returns its player identity."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "bot-reload"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_.-]+$"
+              },
+              "modules": {
+                "$ref": "#/components/schemas/AdminModules"
+              }
+            },
+            "required": ["action", "name", "modules"],
+            "additionalProperties": false,
+            "description": "Reload all players running the named bot AI from inline modules; 404 if no players use that AI."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "bot-remove"
+              },
+              "username": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": ["action", "username"],
+            "additionalProperties": false,
+            "description": "Destructive: remove the named bot player and its private account records."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "stronghold-spawn"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              },
+              "options": {
+                "$ref": "#/components/schemas/AdminStrongholdOptions"
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Spawn an NPC stronghold with optional explicit template, position, owner and deployment delay."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "stronghold-expand"
+              },
+              "room": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 16,
+                "pattern": "^[WE][0-9]{1,3}[NS][0-9]{1,3}$"
+              }
+            },
+            "required": ["action", "room"],
+            "additionalProperties": false,
+            "description": "Expand a stronghold in the specified room."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "stronghold-templates"
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "List available stronghold template names and descriptions."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "maintenance"
+              },
+              "name": {
+                "type": "string",
+                "enum": [
+                  "sendNotifications",
+                  "roomsForceUpdate",
+                  "genPowerBanks",
+                  "genInvaders",
+                  "purgeTransactions",
+                  "recreateNpcOrders",
+                  "calcMarketStats",
+                  "deletePowerCreeps",
+                  "genDeposits",
+                  "genStrongholds",
+                  "expandStrongholds"
+                ]
+              }
+            },
+            "required": ["action", "name"],
+            "additionalProperties": false,
+            "description": "Run the named maintenance job immediately without updating its regular schedule."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "notifications"
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Read queued notification batches, including private player message content."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "server-message"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "required": ["action", "message"],
+            "additionalProperties": false,
+            "description": "Publish an operator message to connected game clients."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "snapshot-export"
+              }
+            },
+            "required": ["action"],
+            "additionalProperties": false,
+            "description": "Export complete durable server state; contains sensitive player data and credential hashes."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "snapshot-import"
+              },
+              "snapshot": {
+                "$ref": "#/components/schemas/AdminSnapshot"
+              }
+            },
+            "required": ["action", "snapshot"],
+            "additionalProperties": false,
+            "description": "Destructive: validate and replace the durable world from a complete versioned server snapshot. Never send untrusted or incomplete snapshots."
+          }
+        ]
+      },
+      "AdminCommandResult": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/AdminStatus"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "paused": {
+                "type": "boolean"
+              }
+            },
+            "required": ["ok", "paused"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "ticks": {
+                "type": "integer"
+              },
+              "time": {
+                "type": "integer"
+              }
+            },
+            "required": ["ok", "ticks", "time"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "tickDuration": {
+                "type": "number"
+              }
+            },
+            "required": ["ok", "tickDuration"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "user": {
+                "$ref": "#/components/schemas/AdminUser"
+              }
+            },
+            "required": ["ok", "user"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "userId": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": ["ok", "userId"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "room": {
+                "$ref": "#/components/schemas/RoomName"
+              }
+            },
+            "required": ["ok", "room"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "from": {
+                "$ref": "#/components/schemas/RoomName"
+              },
+              "to": {
+                "$ref": "#/components/schemas/RoomName"
+              }
+            },
+            "required": ["ok", "from", "to"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "terminal": {
+                "type": "object",
+                "properties": {
+                  "_id": {
+                    "type": "string"
+                  },
+                  "room": {
+                    "$ref": "#/components/schemas/RoomName"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  }
+                },
+                "required": ["_id", "room", "x", "y"],
+                "additionalProperties": true
+              }
+            },
+            "required": ["ok", "terminal"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "usernames": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["ok", "usernames"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "templates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["name", "description"],
+                  "additionalProperties": true
+                }
+              }
+            },
+            "required": ["ok", "templates"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "job": {
+                "type": "string",
+                "enum": [
+                  "sendNotifications",
+                  "roomsForceUpdate",
+                  "genPowerBanks",
+                  "genInvaders",
+                  "purgeTransactions",
+                  "recreateNpcOrders",
+                  "calcMarketStats",
+                  "deletePowerCreeps",
+                  "genDeposits",
+                  "genStrongholds",
+                  "expandStrongholds"
+                ]
+              }
+            },
+            "required": ["ok", "job"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "notifications": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AdminNotification"
+                }
+              }
+            },
+            "required": ["ok", "notifications"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              },
+              "snapshot": {
+                "$ref": "#/components/schemas/AdminSnapshot"
+              }
+            },
+            "required": ["ok", "snapshot"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "integer",
+                "const": 1
+              }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+          }
+        ],
+        "description": "Response shape is selected by action; all successful admin responses include ok: 1. server-message and snapshot-import return only ok."
+      },
+      "AdminGenerateOptions": {
+        "type": "object",
+        "properties": {
+          "exits": {
+            "type": "object",
+            "properties": {
+              "top": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 48
+                },
+                "maxItems": 48,
+                "uniqueItems": true
+              },
+              "right": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 48
+                },
+                "maxItems": 48,
+                "uniqueItems": true
+              },
+              "bottom": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 48
+                },
+                "maxItems": 48,
+                "uniqueItems": true
+              },
+              "left": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 48
+                },
+                "maxItems": 48,
+                "uniqueItems": true
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "terrainType": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 28
+          },
+          "swampType": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 14
+          },
+          "sources": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "mineral": {
+            "anyOf": [
+              {
+                "type": "boolean",
+                "const": false
+              },
+              {
+                "type": "string",
+                "enum": ["H", "O", "U", "L", "K", "Z", "X"]
+              }
+            ]
+          },
+          "controller": {
+            "type": "boolean"
+          },
+          "keeperLairs": {
+            "type": "boolean"
+          },
+          "extractor": {
+            "type": "boolean"
+          },
+          "bus": {
+            "type": "boolean"
+          },
+          "depositType": {
+            "type": "string",
+            "enum": ["silicon", "metal", "biomass", "mist"]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "AdminModule": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "binary": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+              }
+            },
+            "required": ["binary"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AdminModules": {
+        "type": "object",
+        "required": ["main"],
+        "properties": {
+          "main": {
+            "$ref": "#/components/schemas/AdminModule"
+          }
+        },
+        "propertyNames": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^(?![$./\\\\])(?!__proto__$).+$"
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/AdminModule"
+        },
+        "description": "Module source text or base64 WASM objects. main is required. The combined lengths of names and source/base64 strings may not exceed 5 MiB."
+      },
+      "AdminNotification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "date": {
+            "type": "number"
+          }
+        },
+        "required": ["id", "userId", "messages", "date"],
+        "additionalProperties": true
+      },
+      "AdminSnapshot": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1
+          },
+          "world": {
+            "type": "object",
+            "description": "Serialized @openscreeps/game world. Snapshot import validates its complete versioned game-state contract; preserve all exported fields.",
+            "additionalProperties": true
+          },
+          "runtime": {
+            "type": "object",
+            "description": "Serialized bot runtime, including code and player Memory. Contains sensitive player data.",
+            "additionalProperties": true
+          },
+          "profiles": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "registeredDate": {
+                  "type": "number"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "emailDirty": {
+                  "type": "string"
+                },
+                "passwordHash": {
+                  "type": "string"
+                },
+                "steam": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id"],
+                  "additionalProperties": true
+                }
+              },
+              "required": ["registeredDate"],
+              "additionalProperties": true
+            }
+          },
+          "tokens": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "userId": {
+                  "type": "string"
+                },
+                "expires": {
+                  "type": "number"
+                }
+              },
+              "required": ["userId", "expires"],
+              "additionalProperties": true
+            }
+          },
+          "messages": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "_id": {
+                  "type": "string"
+                },
+                "user": {
+                  "type": "string"
+                },
+                "respondent": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "number"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": ["in", "out"]
+                },
+                "unread": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["_id", "user", "respondent", "text", "date", "type", "unread"],
+              "additionalProperties": true
+            }
+          },
+          "notificationOutbox": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminNotification"
+            }
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "tickDuration": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "version",
+          "world",
+          "runtime",
+          "profiles",
+          "tokens",
+          "messages",
+          "notificationOutbox",
+          "paused",
+          "tickDuration"
+        ],
+        "additionalProperties": true,
+        "description": "Versioned server snapshot with additional game collections retained verbatim. This is a round-trip/export-import payload, not a client-authored world editor schema. Contains credential hashes, messages and player Memory: never publish or log it."
+      },
+      "AdminStatus": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "integer",
+            "const": 1
+          },
+          "shard": {
+            "type": "string"
+          },
+          "time": {
+            "type": "integer"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "tickDuration": {
+            "type": "number"
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "users": {
+                "type": "integer"
+              },
+              "players": {
+                "type": "integer"
+              },
+              "bots": {
+                "type": "integer"
+              },
+              "rooms": {
+                "type": "integer"
+              },
+              "activeRooms": {
+                "type": "integer"
+              },
+              "roomObjects": {
+                "type": "integer"
+              },
+              "marketOrders": {
+                "type": "integer"
+              },
+              "sessions": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "users",
+              "players",
+              "bots",
+              "rooms",
+              "activeRooms",
+              "roomObjects",
+              "marketOrders",
+              "sessions"
+            ],
+            "additionalProperties": true
+          },
+          "maintenance": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "interval": {
+                  "type": "number"
+                },
+                "lastRun": {
+                  "type": ["number", "null"]
+                }
+              },
+              "required": ["interval", "lastRun"],
+              "additionalProperties": true
+            }
+          },
+          "notificationOutbox": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ok",
+          "shard",
+          "time",
+          "paused",
+          "tickDuration",
+          "counts",
+          "maintenance",
+          "notificationOutbox"
+        ],
+        "additionalProperties": true
+      },
+      "AdminStrongholdOptions": {
+        "type": "object",
+        "properties": {
+          "templateName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "x": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49
+          },
+          "user": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "deployTime": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "dependentRequired": {
+          "x": ["y", "templateName"],
+          "y": ["x", "templateName"]
+        },
+        "description": "templateName must name a template returned by stronghold-templates. An explicit position requires both coordinates and templateName."
+      },
+      "AdminUser": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "bot": {
+            "type": "string"
+          },
+          "cpu": {
+            "type": "number"
+          },
+          "cpuAvailable": {
+            "type": "number"
+          },
+          "gcl": {
+            "type": "number"
+          },
+          "power": {
+            "type": "number"
+          },
+          "credits": {
+            "type": "number"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "rooms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoomName"
+            }
+          },
+          "resources": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "_id",
+          "cpu",
+          "cpuAvailable",
+          "gcl",
+          "power",
+          "credits",
+          "active",
+          "rooms",
+          "resources"
+        ],
+        "additionalProperties": true
+      }
+    }
+  }
+}
