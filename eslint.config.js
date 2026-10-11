@@ -3,7 +3,8 @@ import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'node_modules/**', '.reference/**', 'data/**'] },
+  // src/generated is emitted by scripts/generate-api.mjs; tsc still type-checks it strictly.
+  { ignores: ['dist/**', 'node_modules/**', '.reference/**', 'data/**', 'src/generated/**'] },
   {
     files: ['**/*.ts'],
     extends: [eslint.configs.recommended, ...tseslint.configs.strictTypeChecked],

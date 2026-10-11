@@ -5,6 +5,7 @@ import { historyTicks } from '../realtime/diff.ts';
 import { getAsset } from '../assets.ts';
 import { ServerKernel } from './server-kernel.service.ts';
 import { SteamAuthService } from './native-steam.ts';
+import type { OperationResult } from '../api/operations.ts';
 
 @Injectable()
 export class HostService {
@@ -14,7 +15,7 @@ export class HostService {
     @Inject(SteamAuthService) readonly steam: SteamAuthService,
   ) {}
 
-  version(): unknown {
+  version() {
     const { context } = this;
     return {
       protocol: 14,
@@ -33,13 +34,15 @@ export class HostService {
     };
   }
 
-  history(room: string, base: number): Promise<unknown> {
+  history(room: string, base: number): Promise<OperationResult<'platformRoomHistory'>> {
     const originalHistory = this.kernel.mods.backend.onGetRoomHistory;
     if (originalHistory) {
-      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      const { promise, resolve, reject } =
+        Promise.withResolvers<OperationResult<'platformRoomHistory'>>();
       originalHistory(room, base, (error, data) => {
         const message = error instanceof Error ? error.message : String(error);
         if (error) reject(new ApiError(message, 500));
+        else if (data === undefined) reject(new ApiError('history not found', 404));
         else resolve(data);
       });
       return promise;
@@ -58,11 +61,11 @@ export class HostService {
     });
   }
 
-  async health(): Promise<unknown> {
+  async health() {
     if (!this.kernel.healthy) throw new ApiError('server unavailable', 503);
     try {
       return await this.context.read(() => ({
-        ok: 1,
+        ok: 1 as const,
         time: this.context.state.world.gameTime,
         paused: this.context.state.paused,
       }));

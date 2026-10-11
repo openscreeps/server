@@ -17,6 +17,7 @@ import {
   type SimulationHooks,
 } from '@openscreeps/game';
 import type { ServerConfig, ServerContext, TickEvent } from '../contracts.ts';
+import type { OperationResult } from '../api/operations.ts';
 import { historyTicks } from '../realtime/diff.ts';
 import { OriginalModuleLoader } from './commonjs.ts';
 import { OriginalCliConfig } from './original-cli.ts';
@@ -65,7 +66,7 @@ export class OriginalBackendConfig extends EventEmitter {
   onGetRoomHistory?: (
     room: string,
     base: number,
-    callback: (error: unknown, data?: unknown) => void,
+    callback: (error: unknown, data?: OperationResult<'platformRoomHistory'>) => void,
   ) => void;
 
   constructor(config: ServerConfig) {

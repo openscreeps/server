@@ -36,7 +36,16 @@ import {
 } from '../contracts.ts';
 import { verifyPassword } from '../api/auth.ts';
 import { EMPTY_BADGE_SVG, getBadgeSvg, parseSubmittedBadge, readBadge } from '../api/badge.ts';
-import { createUser, EMAIL_PATTERN, findUserIdByEmail, findUserIdBySteamId } from '../api/users.ts';
+import { publicUsers } from '../api/gameplay-support.ts';
+import { isRecord } from '../api/guards.ts';
+import type { Schemas } from '../generated/api/index.ts';
+import {
+  createUser,
+  EMAIL_PATTERN,
+  findUserIdByEmail,
+  findUserIdBySteamId,
+  setUserPassword,
+} from '../api/users.ts';
 import { SERVER_CONTEXT } from '../api/transport.ts';
 import { SteamAuthService } from './native-steam.ts';
 
@@ -49,8 +58,19 @@ const MONEY_PAGE_SIZE = 20;
 const DEFAULT_START_ROOM = 'W5N5';
 /** Statistics windows: interval (minutes per point) -> number of points (backend `overview`). */
 const STAT_INTERVALS: Record<number, number> = { 8: 8, 180: 8, 1440: 7 };
-const NOTIFY_INTERVALS = [5, 10, 30, 60, 180, 360, 720, 1440, 4320];
-const NOTIFY_ERROR_INTERVALS = [0, 5, 10, 30, 60, 180, 360, 720, 1440, 4320, 100000];
+
+type NotifyPrefs = Schemas['UserNotifyPrefs'];
+type NotifyInterval = NonNullable<NotifyPrefs['interval']>;
+type NotifyErrorsInterval = NonNullable<NotifyPrefs['errorsInterval']>;
+const NOTIFY_INTERVALS: readonly NotifyInterval[] = [5, 10, 30, 60, 180, 360, 720, 1440, 4320];
+const NOTIFY_ERROR_INTERVALS: readonly NotifyErrorsInterval[] = [
+  0, 5, 10, 30, 60, 180, 360, 720, 1440, 4320, 100000,
+];
+
+type MoneyLogDoc = ServerState['world']['usersMoney'][string];
+type MoneyHistoryEntry = Schemas['UserMoneyHistoryEntry'];
+type MoneyHistoryMarketInfo = Schemas['UserMoneyHistoryMarketInfo'];
+type MoneyHistoryOrder = NonNullable<MoneyHistoryMarketInfo['order']>;
 
 // --- memory -----------------------------------------------------------------------------------
 
@@ -108,10 +128,62 @@ function statWindow(context: ServerContext, interval: number): StatWindow {
   return { endTimes, samples };
 }
 
+// --- notification preferences -----------------------------------------------------------------
+
+function isNotifyInterval(value: unknown): value is NotifyInterval {
+  return NOTIFY_INTERVALS.some((interval) => interval === value);
+}
+
+function isNotifyErrorsInterval(value: unknown): value is NotifyErrorsInterval {
+  return NOTIFY_ERROR_INTERVALS.some((interval) => interval === value);
+}
+
+/** Stored preferences (written only by `POST /api/user/notify-prefs`) narrowed to the contract. */
+function readNotifyPrefs(prefs: JsonObject | undefined): NotifyPrefs | undefined {
+  if (!prefs) return undefined;
+  const { disabled, disabledOnMessages, sendOnline, interval, errorsInterval } = prefs;
+  const result: NotifyPrefs = {};
+  if (typeof disabled === 'boolean') result.disabled = disabled;
+  if (typeof disabledOnMessages === 'boolean') result.disabledOnMessages = disabledOnMessages;
+  if (typeof sendOnline === 'boolean') result.sendOnline = sendOnline;
+  if (isNotifyInterval(interval)) result.interval = interval;
+  if (isNotifyErrorsInterval(errorsInterval)) result.errorsInterval = errorsInterval;
+  return result;
+}
+
+// --- credit ledger ----------------------------------------------------------------------------
+
+/** Ledger entry types of the contract; the engine's market processing writes only these. */
+function isMoneyHistoryDoc(
+  entry: MoneyLogDoc,
+): entry is MoneyLogDoc & { type: MoneyHistoryEntry['type'] } {
+  return entry.type === 'market.buy' || entry.type === 'market.sell' || entry.type === 'market.fee';
+}
+
+/** `market.order` of fee entries: the engine stores the order intent (or refund details) as-is. */
+function isMoneyHistoryOrder(value: unknown): value is MoneyHistoryOrder {
+  if (!isRecord(value)) return false;
+  const { type, resourceType, price, totalAmount, roomName } = value;
+  return (
+    (type === undefined || type === 'buy' || type === 'sell') &&
+    (resourceType === undefined || typeof resourceType === 'string') &&
+    (price === undefined || typeof price === 'number') &&
+    (totalAmount === undefined || typeof totalAmount === 'number') &&
+    (roomName === undefined || typeof roomName === 'string')
+  );
+}
+
+/** Preserve ledger details; reject an invalid imported order rather than silently hiding it. */
+function isMoneyHistoryMarket(
+  market: MoneyLogDoc['market'],
+): market is MoneyLogDoc['market'] & MoneyHistoryMarketInfo {
+  return market.order === undefined || isMoneyHistoryOrder(market.order);
+}
+
 // --- profile views ----------------------------------------------------------------------------
 
-function publicUser(context: ServerContext, user: User): Record<string, unknown> {
-  const result: Record<string, unknown> = { _id: user._id };
+function publicUser(context: ServerContext, user: User): Schemas['UserPublicProfile'] {
+  const result: Schemas['UserPublicProfile'] = { _id: user._id };
   if (user.username !== undefined) result.username = user.username;
   const badge = readBadge(user.badge);
   if (badge) result.badge = badge;
@@ -139,7 +211,7 @@ export class AccountsService {
   me(request: ApiRequest) {
     const user = requireUser(request, this.context);
     const profile = this.context.state.profiles[user._id];
-    const steam: JsonObject = {};
+    const steam: Schemas['AuthSteamAccount'] = {};
     if (profile?.steam) {
       steam.id = profile.steam.id;
       if (profile.steam.displayName !== undefined) steam.displayName = profile.steam.displayName;
@@ -154,10 +226,10 @@ export class AccountsService {
       emailDirty: profile?.emailDirty,
       username: user.username,
       cpu: user.cpu,
-      badge: user.badge,
+      badge: readBadge(user.badge),
       password: profile?.passwordHash !== undefined,
       lastRespawnDate: user.lastRespawnDate,
-      notifyPrefs: profile?.notifyPrefs,
+      notifyPrefs: readNotifyPrefs(profile?.notifyPrefs),
       gcl: user.gcl,
       lastChargeTime: profile?.lastChargeTime,
       blocked: user.blocked,
@@ -168,6 +240,14 @@ export class AccountsService {
       powerExperimentations: user.powerExperimentations ?? 0,
       powerExperimentationTime: user.powerExperimentationTime ?? 0,
     };
+  }
+
+  /** screeps.com `GET /api/user/name`: the signed-in player's username only. */
+  name(request: ApiRequest) {
+    const user = requireUser(request, this.context);
+    // Steam sign-in creates the account before the player chooses a name.
+    if (user.username === undefined) throw new ApiError('username not set');
+    return { username: user.username };
   }
 
   signin(request: ApiRequest) {
@@ -242,9 +322,8 @@ export class AccountsService {
   worldStartRoom(request: ApiRequest) {
     const user = requireUser(request, this.context);
     const rooms = controllerRooms(this.context.state, user._id);
-    if (rooms.length > 0) {
-      return { room: [rooms[Math.floor(Math.random() * rooms.length)]] };
-    }
+    const owned = rooms[Math.floor(Math.random() * rooms.length)];
+    if (owned !== undefined) return { room: [owned] };
     const { rooms: worldRooms } = this.context.state.world;
     if (worldRooms[DEFAULT_START_ROOM]) return { room: [DEFAULT_START_ROOM] };
     const fallback = Object.keys(worldRooms)
@@ -347,7 +426,9 @@ export class AccountsService {
     const options: CloneBranchOptions = { newName, defaultModules };
     if (typeof source === 'string') options.source = source;
     const target = cloneBranch(this.context, user._id, options);
+    if (target.timestamp === undefined) throw new Error('Cloned branch has no timestamp');
     this.context.publish(`user:${user._id}/code`, { id: target._id });
+    // `cloneBranch` stamps every created or overwritten branch with the current time.
     return { timestamp: target.timestamp };
   }
 
@@ -472,9 +553,9 @@ export class AccountsService {
     }
     if (body.sendOnline !== undefined) prefs.sendOnline = Boolean(body.sendOnline);
     const interval = Number(body.interval);
-    if (NOTIFY_INTERVALS.includes(interval)) prefs.interval = interval;
+    if (isNotifyInterval(interval)) prefs.interval = interval;
     const errorsInterval = Number(body.errorsInterval);
-    if (NOTIFY_ERROR_INTERVALS.includes(errorsInterval)) prefs.errorsInterval = errorsInterval;
+    if (isNotifyErrorsInterval(errorsInterval)) prefs.errorsInterval = errorsInterval;
     return {};
   }
 
@@ -506,9 +587,27 @@ export class AccountsService {
     return {};
   }
 
+  /**
+   * Official account page password change (`{oldPassword, password}`). An account without a
+   * local password (Steam sign-up) sets its first one with the form's empty `oldPassword`.
+   * Every session of the account is revoked, including the token refreshed for this request.
+   */
+  setPassword(request: ApiRequest) {
+    const user = requireUser(request, this.context);
+    const { oldPassword, password } = request.body;
+    if (typeof oldPassword !== 'string' || typeof password !== 'string') {
+      throw new ApiError('invalid params');
+    }
+    const hash = this.context.state.profiles[user._id]?.passwordHash;
+    const verified = hash === undefined ? oldPassword === '' : verifyPassword(oldPassword, hash);
+    if (!verified) throw new ApiError('invalid password');
+    setUserPassword(this.context, user._id, password);
+    return {};
+  }
+
   moneyHistory(request: ApiRequest): {
     page: number;
-    list: Array<Omit<ServerState['world']['usersMoney'][string], 'date'> & { date: string }>;
+    list: MoneyHistoryEntry[];
     hasMore: boolean;
   } {
     const user = requireUser(request, this.context);
@@ -519,12 +618,45 @@ export class AccountsService {
     const start = page * MONEY_PAGE_SIZE;
     return {
       page,
-      // Upstream's storage RPC serializes the processor's Date to an ISO string.
-      list: entries.slice(start, start + MONEY_PAGE_SIZE).map((entry) => ({
-        ...entry,
-        date: new Date(entry.date).toISOString(),
-      })),
+      list: entries.slice(start, start + MONEY_PAGE_SIZE).map((entry) => {
+        if (!isMoneyHistoryDoc(entry) || !isMoneyHistoryMarket(entry.market)) {
+          throw new Error('Invalid credit ledger projection');
+        }
+        return {
+          ...entry,
+          // Upstream's storage RPC serializes the processor's Date to an ISO string.
+          date: new Date(entry.date).toISOString(),
+          market: entry.market,
+        };
+      }),
       hasMore: entries.length > start + MONEY_PAGE_SIZE,
+    };
+  }
+
+  /**
+   * Counterparties of one market deal of the caller's credit ledger (official market history
+   * `getDetails`): the `market.buy`/`market.sell` entries recorded at `tick` between `roomName`
+   * and `targetRoomName`, with public profiles. Balances of other players are never returned,
+   * and a deal the caller took no part in resolves to no entries.
+   */
+  moneyHistoryDetails(request: ApiRequest) {
+    const user = requireUser(request, this.context);
+    const tick = Number.parseInt(request.query.get('tick') ?? '', 10);
+    if (Number.isNaN(tick)) throw new ApiError('invalid params');
+    const roomName = request.query.get('roomName') ?? undefined;
+    const targetRoomName = request.query.get('targetRoomName') ?? undefined;
+    const deal = Object.values(this.context.state.world.usersMoney).filter(
+      (entry) =>
+        entry.tick === tick &&
+        (entry.type === 'market.buy' || entry.type === 'market.sell') &&
+        entry.market.roomName === roomName &&
+        entry.market.targetRoomName === targetRoomName,
+    );
+    if (!deal.some((entry) => entry.user === user._id)) return { orders: [], users: {} };
+    const { world } = this.context.state;
+    return {
+      orders: deal.map((entry) => ({ user: entry.user, type: entry.type })),
+      users: structuredClone(publicUsers(world, new Set(deal.map((entry) => entry.user)))),
     };
   }
 

@@ -1,6 +1,5 @@
 import {
   Controller,
-  Get,
   Header,
   Inject,
   Param,
@@ -11,17 +10,17 @@ import {
 } from '@nestjs/common';
 import { ApiError } from './contracts.ts';
 import { HostService } from './services/host.service.ts';
-import { ApiGuard, ApiInterceptor, ApiPolicy } from './api/transport.ts';
+import { ApiOperation, Operation } from './api/operations.ts';
+import { ApiGuard, ApiInterceptor } from './api/transport.ts';
 
-@Controller('api')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class InformationController {
   constructor(@Inject(HostService) readonly service: HostService) {}
 
-  @Get('version')
-  @ApiPolicy()
-  version(): unknown {
+  @ApiOperation('platformVersion')
+  version() {
     return this.service.version();
   }
 }
@@ -30,15 +29,15 @@ export class InformationController {
 export class RootController {
   constructor(@Inject(HostService) readonly service: HostService) {}
 
-  @Get()
+  @Operation('platformRoot')
   @Header('Content-Type', 'text/html; charset=utf-8')
   root(): string {
     return '<!doctype html><title>OpenScreeps</title><h1>OpenScreeps server</h1><p>Connect using the Screeps game client.</p>';
   }
 
-  @Get('room-history')
+  @Operation('platformRoomHistory')
   @UseGuards(ApiGuard)
-  async history(@Query('room') room: unknown, @Query('time') time: unknown): Promise<unknown> {
+  async history(@Query('room') room: unknown, @Query('time') time: unknown) {
     const base = typeof time === 'string' ? Number(time) : NaN;
     if (typeof room !== 'string' || !Number.isSafeInteger(base) || base < 0) {
       throw new ApiError('invalid params', 400);
@@ -51,12 +50,12 @@ export class RootController {
 export class HostController {
   constructor(@Inject(HostService) readonly service: HostService) {}
 
-  @Get('health')
-  health(): Promise<unknown> {
+  @Operation('platformHealth')
+  health() {
     return this.service.health();
   }
 
-  @Get('assets/{*path}')
+  @Operation('platformAsset')
   @Header('Cache-Control', 'no-cache')
   @Header('X-Content-Type-Options', 'nosniff')
   async asset(@Param('path') rawPath: unknown): Promise<StreamableFile> {

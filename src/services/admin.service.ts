@@ -31,6 +31,7 @@ import {
   type User,
 } from '@openscreeps/game';
 import { ApiError, type ApiContext, type ServerContext, type ServerState } from '../contracts.ts';
+import type { ApiOperationResult } from '../api/operations.ts';
 import { SERVER_CONTEXT } from '../api/transport.ts';
 import { ServerKernel, type Cronjobs } from './server-kernel.service.ts';
 import { decodeState } from '../storage.ts';
@@ -43,7 +44,8 @@ import {
 } from '../api/users.ts';
 
 type Args = Readonly<Record<string, unknown>>;
-type Result = Record<string, unknown>;
+/** Admin command bodies without the `ok` marker the controller adds. */
+type Result = ApiOperationResult<'adminCommand'>;
 
 const ROOM_NAME = /^[WE]\d{1,3}[NS]\d{1,3}$/;
 const BOT_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -320,9 +322,10 @@ function targetUser(state: ServerState, selector: UserSelector): User {
 }
 
 /** Account fields safe for operators; credentials live in profiles and are never returned. */
-function publicUser(user: User): Result {
-  const result: Result = {
+function publicUser(user: User) {
+  return {
     _id: user._id,
+    username: user.username,
     cpu: user.cpu ?? 0,
     cpuAvailable: user.cpuAvailable ?? 0,
     gcl: user.gcl ?? 0,
@@ -331,13 +334,14 @@ function publicUser(user: User): Result {
     active: user.active !== 0,
     rooms: user.rooms ?? [],
     resources: user.resources ?? {},
+    bot: user.bot,
   };
-  if (user.username !== undefined) result.username = user.username;
-  if (user.bot !== undefined) result.bot = user.bot;
-  return result;
 }
 
-function statusOf(context: ServerContext, cronjobs: Readonly<Cronjobs>): Result {
+function statusOf(
+  context: ServerContext,
+  cronjobs: Readonly<Cronjobs>,
+): ApiOperationResult<'adminStatus'> {
   const { state } = context;
   const users = Object.values(state.world.users);
   const now = context.now();
@@ -373,7 +377,7 @@ export class AdminService {
     @Inject(ServerKernel) readonly kernel: ServerKernel,
   ) {}
 
-  status(): Promise<Result> {
+  status(): Promise<ApiOperationResult<'adminStatus'>> {
     return this.context.read(() => statusOf(this.context, this.kernel.cronjobs));
   }
 
@@ -496,8 +500,7 @@ export class AdminService {
         const selector = userSelector(args(['userId', 'username']));
         return this.#mutate((state) => {
           const user = targetUser(state, selector);
-          const result: Result = { userId: user._id };
-          if (user.username !== undefined) result.username = user.username;
+          const result = { userId: user._id, username: user.username };
           removePlayer(context, user._id);
           purgeAccountRecords(state, user._id);
           context.publish('auth:revoked', { user: user._id });

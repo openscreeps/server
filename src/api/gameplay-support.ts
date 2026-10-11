@@ -1,11 +1,15 @@
-import type { WorldState } from '@openscreeps/game';
+import type { Badge, WorldState } from '@openscreeps/game';
 import { ownValue } from '@openscreeps/game';
+import { readBadge } from './badge.ts';
 
-/** Public projection of a user (upstream `{_id, username, badge}` field selection). */
+/**
+ * Public projection of a user (upstream `{_id, username, badge}` field selection). A malformed
+ * stored badge is omitted, as `GET /api/user/find` does.
+ */
 export interface PublicUser {
   _id: string;
   username?: string;
-  badge?: unknown;
+  badge?: Badge;
 }
 
 /** JS `parseInt(value)` restricted to the number and string inputs a JSON body can carry. */
@@ -38,8 +42,9 @@ export function publicUser(world: WorldState, userId: string): PublicUser | unde
   if (user.username !== undefined) {
     result.username = user.username;
   }
-  if (user.badge !== undefined) {
-    result.badge = user.badge;
+  const badge = readBadge(user.badge);
+  if (badge) {
+    result.badge = badge;
   }
   return result;
 }

@@ -20,8 +20,9 @@ revision; the game pins and owns its engine dependency. `mise run install` runs
 through their `prepare` scripts. No sibling checkouts are required. Installation
 needs Git and network access to GitHub and the npm registry.
 `isolated-vm` needs a supported prebuilt binary or a native build toolchain.
-Checks include strict TypeScript, type-aware ESLint, Prettier, behavioral tests
-and declaration compilation.
+Checks include the generated API contract staleness check, strict TypeScript,
+type-aware ESLint, Prettier, behavioral and HTTP contract conformance tests and
+declaration compilation.
 
 SQLite tests run by default. Set `SCREEPS_TEST_DATABASE_URL` to a dedicated PostgreSQL
 test database to run both backends; PostgreSQL cases create and remove isolated schemas.
@@ -31,12 +32,14 @@ The test role needs permission to create schemas. CI also has a PostgreSQL servi
 
 Controllers in `src/api/`, `src/http.ts` and `src/admin.ts` declare real Nest routes
 and delegate to injectable classes in `src/services/`. There is no catch-all API
-dispatcher. Guards validate credentials; `ApiInterceptor` holds the world's read or
-mutation lock while invoking ordinary API operations, then serializes the committed
-result. Steam verification runs outside that lock and commits through its service.
-Admin operations own their transactions. Nested reads join the current transaction;
-nested mutations join a mutation but are rejected inside a read. Detached callbacks
-cannot retain a transaction after its owning operation settles.
+dispatcher. Every route is bound to an operation of the generated HTTP contract
+(see [HTTP API contract](#http-api-contract)). Guards validate credentials;
+`ApiInterceptor` holds the world's read or mutation lock while invoking ordinary API
+operations, then serializes the committed result. Steam verification runs outside
+that lock and commits through its service. Admin operations own their transactions.
+Nested reads join the current transaction; nested mutations join a mutation but are
+rejected inside a read. Detached callbacks cannot retain a transaction after its
+owning operation settles.
 
 `ServerKernel` composes `@openscreeps/game`'s `GameSession` rather than implementing
 another tick loop. World generation, NPC maintenance, players, code branches and
@@ -65,6 +68,74 @@ must approve the local game/engine source paths and the used native drivers.
 TypeORM may install its older SQLite peer because dependency-level overrides do
 not propagate to consumers. That unused peer's build can be denied: the server
 explicitly injects its own `better-sqlite3` 13 driver.
+
+## HTTP API contract
+
+The server's HTTP contract is composed, never hand-maintained. The pinned
+[`@openscreeps/openapi`](https://github.com/openscreeps/openapi) package provides
+the official Screeps World specification, its standalone compatibility profile and
+the composer; this repository owns the OpenScreeps extensions in
+`api/extensions.json` (root page, health, terrain assets and the administrator API).
+`scripts/generate-api.mjs` composes them with `composeProfile` and writes:
+
+- `api/openapi.json` and `api/openapi.yaml`: this server's complete contract. Each
+  operation carries `x-profile` (`required`, `adapted`, `addition` or `extension`,
+  with the reason for every standalone adaptation). Official operations the profile
+  excludes — hosted screeps.com services such as seasons, decorations trading, PTR,
+  shard CPU allocation, scoped API tokens and shard listings — are absent, and the
+  server does not serve them.
+- `src/generated/api/`: the generated TypeScript client, operation manifest and
+  request/response types (`index.ts`, `schema.ts`). Never edit these files.
+
+```sh
+npm run generate:api   # regenerate after changing api/extensions.json or the contract pin
+npm run check:api      # fail if any generated artifact is missing or stale (part of `npm run check`)
+```
+
+Routes come from the contract: `@ApiOperation('gameTime', policy)` (player API under
+`ApiGuard`/`ApiInterceptor`) and `@Operation('platformHealth')` (handlers that write
+the whole body) register the method and path from the generated manifest and
+constrain the handler's return type to the operation's generated success body
+(`ok: 1` is added by the interceptor). Request input stays untrusted: services
+validate `ApiRequest` themselves.
+
+Conformance tests run against real registrations and real HTTP:
+
+- `test/api-contract.test.ts` compares the routes Express actually dispatches with
+  the composed operations (no missing, extra or duplicate route), and keeps server-owned
+  schema rules (administrator commands, bot modules, standalone Steam ownership).
+- `test/contract-types.ts` checks that handler compatibility preserves required fields,
+  literal discriminants and typed dictionary values.
+- `test/api-conformance.test.ts` starts a complete server with SQLite and drives it
+  only through the generated client. Every response is validated against
+  `api/openapi.json` (declared status, media type and JSON schema); every composed
+  operation must be exercised and succeed at least once, with no operation exemptions.
+  JSON Schema validation runs in the test harness, not on live ticks. Services still
+  validate untrusted input and narrow domain response projections.
+
+The generated client is published as `@openscreeps/server/client`. It imports only
+the contract runtime (`@openscreeps/openapi/client-runtime`), never Nest, the game
+or `isolated-vm`, and runs in Node and browsers:
+
+```ts
+import { createClient } from '@openscreeps/server/client';
+
+const client = createClient({ baseUrl: 'http://127.0.0.1:21025' });
+const { token } = await client.authSignin({ body: { email: 'Player', password: '...' } });
+const player = createClient({ baseUrl: 'http://127.0.0.1:21025', credentials: { Token: token } });
+console.log((await player.authMe({})).username);
+```
+
+The client sends credentials only for the operation's declared security scheme
+(administrator tokens never reach player operations), rotates refreshed `X-Token`
+values, rejects redirects instead of following them and never retries. The composed
+document is also exported as `@openscreeps/server/openapi.json` and `.yaml`.
+
+The current composition has **91 operations**: 84 selected official operations, two
+private-server compatibility additions and five server-owned extensions. All 91 pass
+the real HTTP conformance scenario. A compiled-server smoke also verifies password
+authentication, code persistence across a SQLite restart, committed manual ticks and
+terrain PNG decoding through the generated client.
 
 ## Compatibility evidence and transport boundaries
 
@@ -416,7 +487,18 @@ Local integration tools can use `POST /api/auth/signin` with
 `{"email":"USERNAME_OR_EMAIL","password":"..."}`. Send the returned token in
 `X-Token`; save the refreshed `X-Token` response header. Tokens expire after 60
 seconds by default, matching the upstream standalone backend. Password changes
-and account removal revoke tokens and authenticated socket sessions.
+and account removal revoke tokens and authenticated socket sessions; the
+response to the revoking request carries no refreshed `X-Token`.
+
+The official account page changes passwords with `POST /api/user/password`
+`{oldPassword, password}` (signed in). A wrong `oldPassword` answers the HTTP 200
+`{"error":"invalid password"}` envelope. An account without a local password
+(Steam sign-up) sets its first one with an empty `oldPassword`; local passwords
+need a username. The market history page resolves deal counterparties with
+`GET /api/user/money-history/details?tick=&roomName=&targetRoomName=`: the
+`market.buy`/`market.sell` ledger entries of that deal (`{user, type}` only, never
+other players' balances) with public profiles, and no entries for a deal the
+caller did not take part in.
 
 The live protocol is SockJS protocol 14 at `/socket`, including websocket,
 XHR-streaming and XHR-polling transports, authentication, gzip framing, room
@@ -481,6 +563,29 @@ screeps.com:
   - `GET /api/user/decorations/inventory` and `GET /api/user/decorations/themes`
     (signed in; otherwise HTTP 401 `{"error":"unauthorized"}`) answer
     `{"ok":1,"list":[]}`.
+- `GET /api/game/room-objects?room=ROOM` answers screeps.com's
+  `{"ok":1,"objects":[...],"users":{...}}`: every object document of the room
+  (flags are separate documents and not included) and the public `_id`, `username`
+  and `badge` of their owners. Like screeps.com it is public; a sent token is
+  neither required nor refreshed. The live room socket channel, unlike this
+  snapshot, still requires a signed-in session. `shard` is ignored.
+- `GET /api/user/name` (signed in) answers `{"ok":1,"username":"..."}`. A
+  Steam account that has not chosen a username yet receives the HTTP 200
+  `{"error":"username not set"}` envelope.
+- `GET /api/game/find-object?_id=ID` (public) answers `{"ok":1,"object":{...}}`
+  with the room object document; the room view uses `object.room` to navigate.
+  An unknown id answers the HTTP 200 `{"error":"object not found"}` envelope.
+- `GET /api/game/random-novice-room` (public) answers
+  `{"ok":1,"room":"ROOM","shard":"SHARD"}` with a random normal room whose novice
+  area is still active, or `{"ok":1}` when the world has none, which the world
+  map ignores.
+
+Other official screeps.com operations — PTR activation, per-shard CPU and ticks,
+decoration and store trading, seasons, arenas, survival and scoreboards, replays
+and history sharing, scoped tokens, GitHub/e-mail account flows, experimental
+PvP/nuke feeds, the server list and shard-addressed room history — belong to
+hosted services. The standalone profile excludes them with reasons, so they are
+absent from `api/openapi.json` and the generated client, and the server answers 404.
 
 ## Embedding
 

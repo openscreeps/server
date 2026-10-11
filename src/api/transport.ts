@@ -27,12 +27,12 @@ const API_POLICY = Symbol('ApiPolicy');
 const API_INPUT = Symbol('ApiInput');
 type ApiHttpRequest = Request & { [API_INPUT]?: ApiRequest };
 
-type ApiPolicyOptions =
+export type ApiPolicyOptions =
   | { auth?: boolean; write?: boolean; unlocked?: false }
   /** External verification runs outside the lock; the service owns its commit. */
   | { auth?: never; write?: never; unlocked: true };
 
-/** Endpoint policy only: Nest's @Get/@Post decorators own route registration. */
+/** Endpoint policy only; `ApiOperation` registers the contract route and applies this policy. */
 export function ApiPolicy(options: ApiPolicyOptions = {}): MethodDecorator {
   return applyDecorators(SetMetadata(API_POLICY, options), HttpCode(200));
 }
@@ -125,7 +125,7 @@ export class ApiInterceptor implements NestInterceptor<unknown, unknown> {
       const input = inputOf(execution);
       let refreshedToken: string | undefined;
       const invoke = () => lastValueFrom(next.handle());
-      const operation = () => {
+      const operation = async () => {
         // Recheck under the lock: a credential may be revoked after the guard's read.
         if (policy.auth) {
           const userId = this.context.auth.check(requestToken(request));
@@ -135,7 +135,12 @@ export class ApiInterceptor implements NestInterceptor<unknown, unknown> {
           const profile = this.context.state.profiles[userId];
           if (profile) profile.lastOnline = this.context.now();
         }
-        return invoke();
+        const result = await invoke();
+        // A password change or account removal revokes every session, including this refresh.
+        if (refreshedToken !== undefined && !this.context.auth.check(refreshedToken)) {
+          refreshedToken = undefined;
+        }
+        return result;
       };
       const result = policy.unlocked
         ? await invoke()

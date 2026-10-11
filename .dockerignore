@@ -6,6 +6,7 @@
 !tsconfig.json
 !tsconfig.build.json
 !src/
+!api/
 !LICENSE
 !THIRD_PARTY_NOTICES.md
 !reference-versions.json

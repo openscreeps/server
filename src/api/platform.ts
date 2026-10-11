@@ -1,28 +1,29 @@
 /*
  * Official-client requests to screeps.com platform services that the pinned standalone backend
  * does not serve: the Steam announcement feed, the Xsolla item-shop promotion banner and the
- * decoration inventory (room decorations, owned items, themes).
+ * decoration inventory (room decorations, owned items, themes). The standalone compatibility
+ * profile documents each adaptation; nothing here claims to provide the hosted service.
  */
 
-import { Controller, Get, Inject, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Controller, Inject, UseGuards, UseInterceptors } from '@nestjs/common';
 import { SteamNewsService } from '../services/steam-news.ts';
-import { ApiGuard, ApiInterceptor, ApiPolicy } from './transport.ts';
+import { ApiOperation } from './operations.ts';
+import { ApiGuard, ApiInterceptor } from './transport.ts';
 
-@Controller('api/steam')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class SteamController {
   constructor(@Inject(SteamNewsService) readonly service: SteamNewsService) {}
 
   /** The upstream Steam request runs outside the world lock. */
-  @Get('news')
-  @ApiPolicy({ unlocked: true })
+  @ApiOperation('platformSteamNews', { unlocked: true })
   news() {
     return this.service.news();
   }
 }
 
-@Controller('api/xsolla')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class XsollaController {
@@ -31,14 +32,13 @@ export class XsollaController {
    * `{ok: 1}` otherwise. This server sells nothing through Xsolla, so no promotion is ever active;
    * relaying screeps.com's sale would advertise purchases that do not reach this server's inventory.
    */
-  @Get('active-promotion')
-  @ApiPolicy({ unlocked: true })
+  @ApiOperation('platformActivePromotion', { unlocked: true })
   activePromotion() {
     return {};
   }
 }
 
-@Controller('api/game')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class DecorationsController {
@@ -48,27 +48,24 @@ export class DecorationsController {
    * no decoration inventory (and `/api/version` advertises no `inventory` feature), so every room
    * is undecorated.
    */
-  @Get('room-decorations')
-  @ApiPolicy({ unlocked: true })
+  @ApiOperation('gameRoomDecorations', { unlocked: true })
   roomDecorations() {
     return { decorations: [] };
   }
 }
 
-@Controller('api/user/decorations')
+@Controller()
 @UseGuards(ApiGuard)
 @UseInterceptors(ApiInterceptor)
 export class UserDecorationsController {
   /** The player's decoration items, `{list: [...]}` on screeps.com; nobody owns any here. */
-  @Get('inventory')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('userDecorationsInventory', { auth: true })
   inventory() {
     return { list: [] };
   }
 
   /** Decoration themes offered to the player, `{list: [...]}` on screeps.com; none exist here. */
-  @Get('themes')
-  @ApiPolicy({ auth: true })
+  @ApiOperation('userDecorationsThemes', { auth: true })
   themes() {
     return { list: [] };
   }

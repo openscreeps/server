@@ -50,6 +50,7 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY LICENSE THIRD_PARTY_NOTICES.md reference-versions.json ./
+COPY api/openapi.json api/openapi.yaml ./api/
 
 # World database, SQLite journals and the admin token file. A new named volume inherits this
 # ownership, so the `node` user (uid 1000) can write it.
