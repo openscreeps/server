@@ -24,6 +24,7 @@ import { LeaderboardService } from '../src/services/leaderboard.ts';
 import { MarketService } from '../src/services/market.ts';
 import { MessagesService } from '../src/services/messages.ts';
 import { PowerService } from '../src/services/power.ts';
+import { SteamAuthService } from '../src/services/native-steam.ts';
 import { SteamNewsService } from '../src/services/steam-news.ts';
 import { ApiError, RawResponse, type ApiContext } from '../src/contracts.ts';
 
@@ -68,6 +69,7 @@ async function startApi(context: ApiContext): Promise<RunningApi> {
         PowerService,
         LeaderboardService,
         SteamNewsService,
+        SteamAuthService,
       ],
     },
     { bodyParser: false, logger: false, abortOnError: false },

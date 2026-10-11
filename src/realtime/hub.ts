@@ -14,6 +14,10 @@ import type { ApiContext, TickEvent } from '../contracts.ts';
 import { canSubscribe, parseChannel, type ChannelSpec } from './channels.ts';
 import { jsonObjects, RoomObjectsMirror } from './diff.ts';
 import { encodeFrame, eventMessage, htmlEncode } from './encode.ts';
+import {
+  OriginalSocketBridge,
+  type BuiltinSocketModule,
+} from '../compatibility/original-sockets.ts';
 
 export const PROTOCOL = 14;
 /** Rooms one user is sent at a time across all connections (backend `rooms.js` `USER_LIMIT`). */
@@ -121,8 +125,6 @@ interface RoomSubscription {
   readonly mirror: RoomObjectsMirror;
   /** Users whose name and badge this client already received. */
   readonly knownUsers: Set<string>;
-  /** Within the user's room limit (otherwise waiting after `subscribe limit reached`). */
-  served: boolean;
   /** The full room (with the built-in users) was sent. */
   started: boolean;
 }
@@ -149,9 +151,14 @@ function memoryPathValue(memory: unknown, path: string): string {
 
 export class RealtimeHub {
   readonly #context: ApiContext;
+  readonly #original: OriginalSocketBridge | undefined;
   readonly #sessions = new Set<Session>();
-  /** Room subscriptions in subscription order; the oldest are served first under the limit. */
+  /** Room subscriptions in subscription order (upstream's per-room subscriber lists). */
   readonly #rooms = new Set<RoomSubscription>();
+  /** Room subscriptions counted per user by the latest update (upstream `usersLimit`). */
+  #roomsPerUser = new Map<string, number>();
+  /** Uniform `[0, 1)` source of the per-update room order (upstream `_.shuffle`). */
+  readonly #random: () => number;
   readonly #channels = new Map<string, ChannelSubscribers>();
   /** Visuals of the latest committed tick (driver `ROOM_VISUAL` keys of `gameTime - 1`). */
   #visuals: { time: number; users: Record<string, Record<string, string>> } | undefined;
@@ -163,8 +170,10 @@ export class RealtimeHub {
   #lastFlush = -Infinity;
   #closed = false;
 
-  constructor(context: ApiContext) {
+  constructor(context: ApiContext, random: () => number = Math.random) {
     this.#context = context;
+    this.#random = random;
+    this.#original = context.mods ? new OriginalSocketBridge(context, context.mods) : undefined;
     context.events.on('tick', this.#onTick);
     context.events.on('message', this.#onMessage);
     context.events.on('reset', this.#onReset);
@@ -202,6 +211,7 @@ export class RealtimeHub {
     this.#context.events.off('message', this.#onMessage);
     this.#context.events.off('reset', this.#onReset);
     this.#closeSessions();
+    this.#original?.close();
   }
 
   #closeSessions(): void {
@@ -211,6 +221,7 @@ export class RealtimeHub {
     }
     this.#visuals = undefined;
     this.#pendingCpu.clear();
+    this.#roomsPerUser = new Map();
   }
 
   #report(error: unknown): void {
@@ -235,6 +246,7 @@ export class RealtimeHub {
       await this.#subscribe(session, message.slice('subscribe '.length));
     } else if (message.startsWith('unsubscribe ')) {
       this.#unsubscribe(session, message.slice('unsubscribe '.length));
+      this.#original?.unsubscribe(session, message.slice('unsubscribe '.length));
     } else if (message.startsWith('auth ')) {
       await this.#authenticate(session, message.slice('auth '.length));
     } else if (message === 'gzip on') {
@@ -287,6 +299,7 @@ export class RealtimeHub {
   }
 
   #dropAuthenticated(session: Session): void {
+    this.#original?.disconnect(session);
     for (const channel of [...session.channels]) {
       if (channel !== 'server-message') this.#unsubscribe(session, channel);
     }
@@ -296,9 +309,31 @@ export class RealtimeHub {
    * Subscriptions.
    */
 
-  async #subscribe(session: Session, channel: string): Promise<void> {
+  async #subscribe(session: Session, channel: string, module?: BuiltinSocketModule): Promise<void> {
+    if (this.#original && module === undefined) {
+      await this.#original.subscribe(
+        session,
+        channel,
+        (kind, name) => this.#subscribe(session, name, kind),
+        (name) => {
+          this.#unsubscribe(session, name);
+        },
+      );
+      return;
+    }
     const spec = parseChannel(channel);
     if (!spec || !canSubscribe(spec, session.userId) || session.channels.has(channel)) return;
+    if (module !== undefined) {
+      const owner: BuiltinSocketModule =
+        spec.kind === 'server-message'
+          ? 'system'
+          : spec.kind === 'room'
+            ? 'rooms'
+            : spec.kind === 'roomMap'
+              ? 'map'
+              : 'user';
+      if (module !== owner) return;
+    }
     session.channels.add(channel);
     if (spec.kind === 'server-message' || spec.kind === 'user') {
       this.#listen(session, channel, spec);
@@ -384,6 +419,7 @@ export class RealtimeHub {
 
   #disconnect(session: Session): void {
     if (session.closed) return;
+    this.#original?.disconnect(session);
     for (const channel of [...session.channels]) this.#unsubscribe(session, channel);
     session.closed = true;
     this.#sessions.delete(session);
@@ -406,24 +442,24 @@ export class RealtimeHub {
    * is an exact diff from what that client holds, however many ticks it skipped.
    */
 
-  /** Within a read: register and send the full room. */
+  /**
+   * Within a read: register and send the full room. Like upstream, a user whose subscriptions
+   * exceeded the limit at the latest update waits for an update to select it instead.
+   */
   #subscribeRoom(session: Session, userId: string, room: string): void {
     // Unknown rooms are silently ignored like upstream (`invalid room`).
     if (!this.#context.state.world.rooms[room]) return;
-    let earlier = 0;
-    for (const other of this.#rooms) if (other.userId === userId) earlier++;
     const subscription: RoomSubscription = {
       session,
       room,
       userId,
       mirror: new RoomObjectsMirror(),
       knownUsers: new Set(Object.keys(BUILTIN_USERS)),
-      served: earlier < USER_ROOM_LIMIT,
       started: false,
     };
     session.rooms.set(room, subscription);
     this.#rooms.add(subscription);
-    if (!subscription.served) {
+    if ((this.#roomsPerUser.get(userId) ?? 0) > USER_ROOM_LIMIT) {
       session.send(eventMessage(`err@room:${room}`, 'subscribe limit reached'));
       return;
     }
@@ -635,24 +671,36 @@ export class RealtimeHub {
     const world = state.world;
     const { gameTime } = world;
 
+    // Upstream `rooms.js`: rooms in a new random order each update, each room's subscribers in
+    // subscription order; a user's subscriptions beyond the limit are skipped with an error.
+    const subscriptionsByRoom = new Map<string, RoomSubscription[]>();
+    for (const subscription of this.#rooms) {
+      const subscriptions = subscriptionsByRoom.get(subscription.room);
+      if (subscriptions) subscriptions.push(subscription);
+      else subscriptionsByRoom.set(subscription.room, [subscription]);
+    }
+    // lodash `_.shuffle` (inside-out Fisher-Yates).
+    const rooms: RoomSubscription[][] = [];
+    for (const subscriptions of subscriptionsByRoom.values()) {
+      const swap = Math.floor(this.#random() * (rooms.length + 1));
+      rooms.push(rooms[swap] ?? subscriptions);
+      rooms[swap] = subscriptions;
+    }
     const served: RoomSubscription[] = [];
     const roomsPerUser = new Map<string, number>();
-    for (const subscription of this.#rooms) {
+    for (const subscription of rooms.flat()) {
       const count = (roomsPerUser.get(subscription.userId) ?? 0) + 1;
       roomsPerUser.set(subscription.userId, count);
       if (count > USER_ROOM_LIMIT) {
-        if (subscription.served) {
-          subscription.served = false;
-          subscription.session.send(
-            eventMessage(`err@room:${subscription.room}`, 'subscribe limit reached'),
-          );
-        }
+        subscription.session.send(
+          eventMessage(`err@room:${subscription.room}`, 'subscribe limit reached'),
+        );
         continue;
       }
-      subscription.served = true;
       // A connection still compressing earlier updates gets the accumulated diff next time.
       if (!subscription.session.backlogged) served.push(subscription);
     }
+    this.#roomsPerUser = roomsPerUser;
     const objectsByRoom = this.#roomObjects(new Set(served.map(({ room }) => room)));
     for (const subscription of served)
       this.#sendRoom(subscription, objectsByRoom.get(subscription.room));

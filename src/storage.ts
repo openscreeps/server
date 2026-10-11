@@ -1,5 +1,24 @@
-import { isRecord, parseGameState } from '@openscreeps/game';
-import type { ServerState } from './contracts.ts';
+import { createGameState, isRecord, parseGameState, type Constants } from '@openscreeps/game';
+import type { ServerConfig, ServerState } from './contracts.ts';
+import { assertOriginalStorageData } from './compatibility/original-storage.ts';
+
+/** The world a kernel creates for an empty database. */
+export function initialServerState(config: ServerConfig, constants?: Constants): ServerState {
+  return {
+    ...createGameState({
+      size: config.worldSize,
+      seed: config.seed,
+      shardName: config.shardName,
+      ...(constants === undefined ? {} : { constants }),
+    }),
+    profiles: {},
+    tokens: {},
+    messages: {},
+    notificationOutbox: [],
+    paused: config.paused,
+    tickDuration: config.tickDuration,
+  };
+}
 
 function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -9,8 +28,27 @@ function entriesMatch(value: unknown, check: (entry: unknown) => boolean): boole
   return isRecord(value) && Object.values(value).every(check);
 }
 
-function strings(value: unknown): boolean {
+function strings(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry: unknown) => typeof entry === 'string');
+}
+
+/** `message\n[type] (count)`, the formatted text of one notification in a batch. */
+const FORMATTED_NOTIFICATION = /^([\s\S]*)\n\[([^\]\n]*)\] \((\d+)\)$/;
+
+/**
+ * Batches persisted before they carried their source notifications kept only the formatted text.
+ * Recover `message`, `type` and `count` from it (unrecognized text becomes a `msg` with count 1);
+ * the original dates were not stored, so the batch date stands in for them.
+ */
+function upgradeNotificationBatch(entry: Record<string, unknown>): void {
+  if (entry.notifications !== undefined || !strings(entry.messages) || !finite(entry.date)) return;
+  const date = entry.date;
+  entry.notifications = entry.messages.map((text) => {
+    const match = FORMATTED_NOTIFICATION.exec(text);
+    if (!match) return { message: text, date, count: 1, type: 'msg' };
+    const [, message = '', type = '', count = '0'] = match;
+    return { message, date, count: Number(count), type };
+  });
 }
 
 /** Validate server-private records before replacing the last durable world. */
@@ -36,15 +74,27 @@ function validateServerRecords(value: Record<string, unknown>): void {
   }
   if (
     !Array.isArray(value.notificationOutbox) ||
-    !value.notificationOutbox.every(
-      (entry: unknown) =>
-        isRecord(entry) &&
+    !value.notificationOutbox.every((entry: unknown) => {
+      if (!isRecord(entry)) return false;
+      upgradeNotificationBatch(entry);
+      return (
         typeof entry.id === 'string' &&
         typeof entry.userId === 'string' &&
         (entry.email === undefined || typeof entry.email === 'string') &&
         strings(entry.messages) &&
-        finite(entry.date),
-    )
+        Array.isArray(entry.notifications) &&
+        entry.notifications.every(
+          (detail: unknown) =>
+            isRecord(detail) &&
+            typeof detail.message === 'string' &&
+            finite(detail.date) &&
+            finite(detail.count) &&
+            typeof detail.type === 'string',
+        ) &&
+        entry.notifications.length === entry.messages.length &&
+        finite(entry.date)
+      );
+    })
   ) {
     throw new Error('Invalid notification outbox');
   }
@@ -74,5 +124,6 @@ export function decodeState(serialized: string): ServerState {
   }
   const state = parseGameState(value);
   validateServerRecords(value);
+  if (value.originalStorage !== undefined) assertOriginalStorageData(value.originalStorage);
   return state as unknown as ServerState;
 }

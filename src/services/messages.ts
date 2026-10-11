@@ -27,6 +27,14 @@ function newestFirst(a: UserMessage, b: UserMessage): number {
   return b.date - a.date || (a._id < b._id ? 1 : a._id > b._id ? -1 : 0);
 }
 
+/**
+ * Wire form of a stored message. Upstream stores `new Date()` and its storage RPC, HTTP JSON and
+ * pubsub all serialize it to an ISO-8601 string; the stored date stays numeric for sorting.
+ */
+function wireMessage(message: UserMessage): Omit<UserMessage, 'date'> & { date: string } {
+  return { ...message, date: new Date(message.date).toISOString() };
+}
+
 /** Backend `sendMessageNotification`: upserts a `msg` notification honoring `notifyPrefs`. */
 function notifyRecipient(context: ServerContext, userId: string, senderName: string): void {
   const profile = context.state.profiles[userId];
@@ -86,9 +94,13 @@ export class MessagesService {
     state.messages[outMessage._id] = outMessage;
     state.messages[inMessage._id] = inMessage;
     notifyRecipient(this.context, respondent, user.username ?? user._id);
-    this.context.publish(`user:${user._id}/message:${respondent}`, { message: outMessage });
-    this.context.publish(`user:${respondent}/message:${user._id}`, { message: inMessage });
-    this.context.publish(`user:${respondent}/newMessage`, { message: inMessage });
+    this.context.publish(`user:${user._id}/message:${respondent}`, {
+      message: wireMessage(outMessage),
+    });
+    this.context.publish(`user:${respondent}/message:${user._id}`, {
+      message: wireMessage(inMessage),
+    });
+    this.context.publish(`user:${respondent}/newMessage`, { message: wireMessage(inMessage) });
     return {};
   }
 
@@ -99,7 +111,8 @@ export class MessagesService {
       .filter((message) => message.user === user._id && message.respondent === respondent)
       .sort(newestFirst)
       .slice(0, LIST_LIMIT)
-      .reverse();
+      .reverse()
+      .map(wireMessage);
     return { messages };
   }
 
@@ -111,7 +124,7 @@ export class MessagesService {
       .sort(newestFirst)) {
       if (!latest.has(message.respondent)) latest.set(message.respondent, message);
     }
-    const messages = [...latest].map(([_id, message]) => ({ _id, message }));
+    const messages = [...latest].map(([_id, message]) => ({ _id, message: wireMessage(message) }));
     const users: Record<string, { _id: string; username?: string; badge?: unknown }> = {};
     for (const id of latest.keys()) {
       const respondent = this.context.state.world.users[id];

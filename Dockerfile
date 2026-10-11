@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 # while keeping the native modules that were built for this platform.
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
-RUN npm run build && npm prune --omit=dev --no-audit --no-fund
+RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM ${NODE_IMAGE} AS runtime
 
@@ -45,6 +45,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 # Application files stay owned by root and are read-only for the unprivileged runtime user.
+# The game and engine packages, including their notices, are installed within node_modules.
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

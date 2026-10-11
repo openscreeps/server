@@ -4,7 +4,7 @@
  */
 
 import { Inject, Injectable } from '@nestjs/common';
-import { constants as C, type CodeModules } from '@openscreeps/game';
+import { constants as C, worldConstants, type CodeModules } from '@openscreeps/game';
 import {
   closeRoom,
   createNpcTerminal,
@@ -12,15 +12,12 @@ import {
   expandStrongholdInRoom,
   findUserByUsername,
   generateRoom,
-  isMaintenanceJobName,
   jobKey,
-  MAINTENANCE_JOBS,
   openRoom,
   reloadBot,
   removeBot,
   removePlayer,
   removeRoom,
-  runJob,
   spawnBot,
   spawnStronghold,
   strongholdTemplates,
@@ -35,10 +32,15 @@ import {
 } from '@openscreeps/game';
 import { ApiError, type ApiContext, type ServerContext, type ServerState } from '../contracts.ts';
 import { SERVER_CONTEXT } from '../api/transport.ts';
-import { maintenanceHooks, ServerKernel } from './server-kernel.service.ts';
+import { ServerKernel, type Cronjobs } from './server-kernel.service.ts';
 import { decodeState } from '../storage.ts';
 import { isRecord } from '../api/guards.ts';
-import { createUser, setUserPassword, type CreateUserOptions } from '../api/users.ts';
+import {
+  createUser,
+  purgeAccountRecords,
+  setUserPassword,
+  type CreateUserOptions,
+} from '../api/users.ts';
 
 type Args = Readonly<Record<string, unknown>>;
 type Result = Record<string, unknown>;
@@ -71,7 +73,6 @@ const DEPOSITS: readonly string[] = [
   C.RESOURCE_BIOMASS,
   C.RESOURCE_MIST,
 ];
-const ACCOUNT_RESOURCES: readonly string[] = C.INTERSHARD_RESOURCES;
 
 export function invalid(message: string): ApiError {
   return new ApiError(message, 400);
@@ -336,23 +337,7 @@ function publicUser(user: User): Result {
   return result;
 }
 
-function dropWhere<T>(collection: Record<string, T>, predicate: (value: T) => boolean): void {
-  for (const [key, value] of Object.entries(collection)) {
-    if (predicate(value)) Reflect.deleteProperty(collection, key);
-  }
-}
-
-/** Deletes the server-private account records of a removed player (`removePlayer`). Lock-held. */
-function purgeAccountRecords(state: ServerState, userId: string): void {
-  Reflect.deleteProperty(state.profiles, userId);
-  dropWhere(state.tokens, (token) => token.userId === userId);
-  dropWhere(state.messages, (message) => message.user === userId);
-  state.notificationOutbox = state.notificationOutbox.filter(
-    (notification) => notification.userId !== userId,
-  );
-}
-
-function statusOf(context: ServerContext): Result {
+function statusOf(context: ServerContext, cronjobs: Readonly<Cronjobs>): Result {
   const { state } = context;
   const users = Object.values(state.world.users);
   const now = context.now();
@@ -372,12 +357,10 @@ function statusOf(context: ServerContext): Result {
       sessions: Object.values(state.tokens).filter((token) => token.expires > now).length,
     },
     maintenance: Object.fromEntries(
-      Object.keys(MAINTENANCE_JOBS)
-        .filter(isMaintenanceJobName)
-        .map((name) => [
-          name,
-          { interval: MAINTENANCE_JOBS[name].interval, lastRun: state.jobs[jobKey(name)] ?? null },
-        ]),
+      Object.entries(cronjobs).map(([name, job]) => [
+        name,
+        { interval: job.interval, lastRun: state.jobs[jobKey(name)] ?? null },
+      ]),
     ),
     notificationOutbox: state.notificationOutbox.length,
   };
@@ -391,7 +374,7 @@ export class AdminService {
   ) {}
 
   status(): Promise<Result> {
-    return this.context.read(() => statusOf(this.context));
+    return this.context.read(() => statusOf(this.context, this.kernel.cronjobs));
   }
 
   execute(body: unknown): Promise<Result> {
@@ -413,7 +396,7 @@ export class AdminService {
     switch (action) {
       case 'status':
         args([]);
-        return context.read(() => statusOf(context));
+        return context.read(() => statusOf(context, this.kernel.cronjobs));
       case 'pause':
       case 'resume': {
         args([]);
@@ -473,7 +456,11 @@ export class AdminService {
         const resources =
           resourceInput === undefined
             ? undefined
-            : fields(resourceInput, ACCOUNT_RESOURCES, 'resources');
+            : fields(
+                resourceInput,
+                worldConstants(context.state.world).INTERSHARD_RESOURCES,
+                'resources',
+              );
         const amounts =
           resources === undefined
             ? []
@@ -629,16 +616,13 @@ export class AdminService {
         return { templates: strongholdTemplates() };
       case 'maintenance': {
         const name = text(args(['name']), 'name', 64);
-        if (!isMaintenanceJobName(name)) {
+        if (!Object.hasOwn(this.kernel.cronjobs, name)) {
           throw invalid(
-            `maintenance name must be one of ${Object.keys(MAINTENANCE_JOBS).join(', ')}`,
+            `maintenance name must be one of ${Object.keys(this.kernel.cronjobs).join(', ')}`,
           );
         }
-        return this.#mutate((state) => {
-          const hooks = maintenanceHooks(() => state);
-          state.notificationOutbox.push(...runJob(state, name, context.now(), hooks));
-          return { job: name };
-        });
+        await this.kernel.runCronjob(name);
+        return { job: name };
       }
       case 'notifications':
         args([]);

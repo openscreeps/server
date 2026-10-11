@@ -2,10 +2,11 @@
 
 ## Screeps standalone backend, launcher and storage — ISC
 
-HTTP API behavior, badge shapes and live protocol behavior derive from the public
-Screeps standalone implementation. Reference revisions are recorded in
+HTTP API behavior, badge shapes, live protocol, original JavaScript administration,
+database upgrade/conversion and storage compatibility behavior derive from the
+public Screeps standalone implementation. Reference revisions are recorded in
 `reference-versions.json`. SQLite/PostgreSQL persistence and Nest integration are
-implemented here; the upstream storage and launcher sources serve as behavioral references.
+implemented here; compatibility adapters retain upstream source attribution.
 
 - https://github.com/screeps/backend-local
 - https://github.com/screeps/launcher
@@ -30,7 +31,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 The transitive `@openscreeps/engine` dependency, owned by `@openscreeps/game`,
 includes its own `LICENSE`, `THIRD_PARTY_NOTICES.md` and source-revision manifest,
 covering the Screeps engine/common/driver ports and bundled runtime libraries.
-Its exact revision is pinned by the game package and recorded in the server lockfile.
+Its exact Git revision is pinned by the game package and recorded in the server lockfile.
 
 ## OpenScreeps game
 

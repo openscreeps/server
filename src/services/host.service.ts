@@ -4,34 +4,46 @@ import { SERVER_CONTEXT } from '../api/transport.ts';
 import { historyTicks } from '../realtime/diff.ts';
 import { getAsset } from '../assets.ts';
 import { ServerKernel } from './server-kernel.service.ts';
+import { SteamAuthService } from './native-steam.ts';
 
 @Injectable()
 export class HostService {
   constructor(
     @Inject(SERVER_CONTEXT) readonly context: ApiContext,
     @Inject(ServerKernel) readonly kernel: ServerKernel,
+    @Inject(SteamAuthService) readonly steam: SteamAuthService,
   ) {}
 
   version(): unknown {
     const { context } = this;
     return {
       protocol: 14,
-      useNativeAuth: false,
+      useNativeAuth: this.steam.useNativeAuth,
       users: Object.values(context.state.world.users).filter(
         (user) => user.active !== 0 && (user.cpu ?? 0) > 0 && !user.bot,
       ).length,
       packageVersion: '0.0.0',
       serverData: {
-        welcomeText: context.config.welcomeText,
-        customObjectTypes: {},
-        historyChunkSize: context.config.historyChunkSize,
-        socketUpdateThrottle: context.config.socketUpdateThrottle,
-        renderer: { resources: {}, metadata: {} },
+        welcomeText: this.kernel.mods.backend.welcomeText,
+        customObjectTypes: this.kernel.mods.backend.customObjectTypes,
+        historyChunkSize: this.kernel.mods.backend.historyChunkSize,
+        socketUpdateThrottle: this.kernel.mods.backend.socketUpdateThrottle,
+        renderer: this.kernel.mods.backend.renderer,
       },
     };
   }
 
   history(room: string, base: number): Promise<unknown> {
+    const originalHistory = this.kernel.mods.backend.onGetRoomHistory;
+    if (originalHistory) {
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      originalHistory(room, base, (error, data) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (error) reject(new ApiError(message, 500));
+        else resolve(data);
+      });
+      return promise;
+    }
     return this.context.read(() => {
       const frames = this.context.state.history[room] ?? [];
       const index = frames.findIndex((frame) => frame.time === base);

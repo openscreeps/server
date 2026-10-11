@@ -40,11 +40,15 @@
     "@nestjs/core": "12.1.2",
     "@nestjs/platform-express": "12.1.2",
     "@nestjs/typeorm": "12.0.2",
-    "@openscreeps/game": "github:openscreeps/game#fd9cde57de20a1e37a0108c46ca78314c8b9bc36",
+    "@openscreeps/game": "github:openscreeps/game#bd4174e12797606ec7f2a702cf44b5427526c730",
     "better-sqlite3": "13.0.3",
     "express": "5.2.1",
+    "ini": "7.0.0",
+    "lodash": "3.10.1",
+    "lokijs": "1.5.6",
     "pg": "8.23.1",
     "pngjs": "7.0.0",
+    "q": "1.5.1",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "sockjs": "0.3.24",
@@ -54,8 +58,8 @@
     "better-sqlite3@13.0.3": true,
     "esbuild@0.28.2": true,
     "isolated-vm@7.0.1": true,
-    "github:openscreeps/engine#55883bef45d0d1c3c8c16e497fca56fe0b43ff11": true,
-    "github:openscreeps/game#fd9cde57de20a1e37a0108c46ca78314c8b9bc36": true
+    "github:openscreeps/game#bd4174e12797606ec7f2a702cf44b5427526c730": true,
+    "github:openscreeps/engine#82c22e5391da91a1efb6c0d047d60296ca7cd94b": true
   },
   "overrides": {
     "typeorm": {
@@ -66,6 +70,7 @@
     "@eslint/js": "10.0.1",
     "@types/better-sqlite3": "9.6.0",
     "@types/express": "5.0.6",
+    "@types/ini": "4.1.1",
     "@types/node": "24.19.1",
     "@types/pg": "8.23.1",
     "@types/pngjs": "6.0.5",
@@ -73,7 +78,6 @@
     "@types/sockjs-client": "1.5.4",
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
-    "lodash": "3.10.1",
     "prettier": "3.9.9",
     "sockjs-client": "1.6.1",
     "tsx": "4.23.15",

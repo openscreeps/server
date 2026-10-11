@@ -35,6 +35,25 @@ export function createConfig(options: Partial<ServerConfig> = {}): ServerConfig 
       );
     }
   }
+  for (const [key, minimum, maximum] of [
+    ['cliPort', 0, 65535],
+    ['runnerCount', 1, 256],
+    ['runnerThreads', 1, 256],
+    ['processorCount', 1, 256],
+    ['workerRestartInterval', 0, 365 * 24 * 60 * 60],
+    ['logRotateKeep', 0, 1000],
+  ] as const) {
+    const value = config[key];
+    if (
+      value !== undefined &&
+      (!Number.isSafeInteger(value) || value < minimum || value > maximum)
+    ) {
+      throw new Error(
+        `Invalid ${key}: expected an integer from ${String(minimum)} to ${String(maximum)}`,
+      );
+    }
+  }
+  if (config.cliPort !== undefined) config.cliHost ??= '127.0.0.1';
   if (!config.host || !config.database || !/^[A-Za-z0-9_-]{1,64}$/.test(config.shardName)) {
     throw new Error('Invalid host, database, or shard name');
   }
@@ -49,6 +68,9 @@ export function createConfig(options: Partial<ServerConfig> = {}): ServerConfig 
     throw new Error('The admin token must contain at least 32 characters');
   }
   if (config.assetDirectory !== undefined) config.assetDirectory = resolve(config.assetDirectory);
+  for (const key of ['modFile', 'originalDatabase', 'logDirectory', 'steamGreenworks'] as const) {
+    if (config[key] !== undefined) config[key] = resolve(config[key]);
+  }
   return config;
 }
 
@@ -69,6 +91,11 @@ export function configFromEnvironment(
       | 'adminToken'
       | 'steamKey'
       | 'assetDirectory'
+      | 'steamGreenworks'
+      | 'modFile'
+      | 'originalDatabase'
+      | 'cliHost'
+      | 'logDirectory'
     >
   > = {
     GAME_HOST: 'host',
@@ -79,6 +106,11 @@ export function configFromEnvironment(
     SCREEPS_ADMIN_TOKEN: 'adminToken',
     STEAM_KEY: 'steamKey',
     ASSET_DIR: 'assetDirectory',
+    STEAM_GREENWORKS: 'steamGreenworks',
+    MODFILE: 'modFile',
+    DB_PATH: 'originalDatabase',
+    CLI_HOST: 'cliHost',
+    SCREEPS_LOG_DIRECTORY: 'logDirectory',
   };
   for (const [name, key] of Object.entries(text)) {
     const value = environment[name];
@@ -86,13 +118,32 @@ export function configFromEnvironment(
   }
   const numbers: Record<
     string,
-    keyof Pick<ServerConfig, 'port' | 'tickDuration' | 'worldSize' | 'seed' | 'historyTicks'>
+    keyof Pick<
+      ServerConfig,
+      | 'port'
+      | 'tickDuration'
+      | 'worldSize'
+      | 'seed'
+      | 'historyTicks'
+      | 'cliPort'
+      | 'runnerCount'
+      | 'runnerThreads'
+      | 'processorCount'
+      | 'workerRestartInterval'
+      | 'logRotateKeep'
+    >
   > = {
     GAME_PORT: 'port',
     SCREEPS_TICK_DURATION: 'tickDuration',
     SCREEPS_WORLD_SIZE: 'worldSize',
     SCREEPS_SEED: 'seed',
     SCREEPS_HISTORY_TICKS: 'historyTicks',
+    CLI_PORT: 'cliPort',
+    RUNNERS_CNT: 'runnerCount',
+    RUNNER_THREADS: 'runnerThreads',
+    PROCESSORS_CNT: 'processorCount',
+    SCREEPS_WORKER_RESTART_INTERVAL: 'workerRestartInterval',
+    SCREEPS_LOG_ROTATE_KEEP: 'logRotateKeep',
   };
   for (const [name, key] of Object.entries(numbers)) {
     const value = environment[name];

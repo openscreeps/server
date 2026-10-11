@@ -23,6 +23,21 @@ export interface CreateUserOptions extends CreatePlayerOptions {
   steamId?: string;
   email?: string;
 }
+function dropWhere<T>(collection: Record<string, T>, predicate: (value: T) => boolean): void {
+  for (const [key, value] of Object.entries(collection)) {
+    if (predicate(value)) Reflect.deleteProperty(collection, key);
+  }
+}
+
+/** Deletes the server-private account records of a removed player (`removePlayer`). Lock-held. */
+export function purgeAccountRecords(state: ServerState, userId: string): void {
+  Reflect.deleteProperty(state.profiles, userId);
+  dropWhere(state.tokens, (token) => token.userId === userId);
+  dropWhere(state.messages, (message) => message.user === userId);
+  state.notificationOutbox = state.notificationOutbox.filter(
+    (notification) => notification.userId !== userId,
+  );
+}
 
 export function findUserIdByEmail(state: ServerState, email: string): string | undefined {
   const lower = email.toLowerCase();

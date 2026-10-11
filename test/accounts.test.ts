@@ -19,6 +19,7 @@ import {
   type ServerConfig,
   type ServerEvents,
   type ServerState,
+  type UserMessage,
 } from '../src/contracts.ts';
 import { StateStore } from '../src/services/state-store.service.ts';
 import { STEAM_NEWS_TTL_MS } from '../src/services/steam-news.ts';
@@ -802,6 +803,8 @@ void describe('messages', () => {
     const alice = signIn(h, 'Alice');
     const bob = signIn(h, 'Bob');
     const carol = signIn(h, 'Carol');
+    const start = h.clock.now;
+    const iso = (offset: number): string => new Date(start + offset).toISOString();
     await h.call('POST', '/api/user/messages/send', {
       token: alice.token,
       body: { respondent: bob.userId, text: 'hi bob' },
@@ -817,27 +820,39 @@ void describe('messages', () => {
       body: { respondent: alice.userId, text: 'hello alice' },
     });
 
-    assert.deepEqual(
-      h.published.slice(0, 3).map(([channel]) => channel),
+    const pick = (type: 'in' | 'out', text: string): UserMessage => {
+      const stored = Object.values(h.context.state.messages).find(
+        (m) => m.type === type && m.text === text,
+      );
+      assert.ok(stored);
+      return stored;
+    };
+    // Upstream publishes the stored `Date` through JSON: ISO strings, numeric dates stay stored.
+    assert.deepEqual(h.published.slice(0, 3), [
       [
         `user:${alice.userId}/message:${bob.userId}`,
-        `user:${bob.userId}/message:${alice.userId}`,
-        `user:${bob.userId}/newMessage`,
+        { message: { ...pick('out', 'hi bob'), date: iso(0) } },
       ],
-    );
+      [
+        `user:${bob.userId}/message:${alice.userId}`,
+        { message: { ...pick('in', 'hi bob'), date: iso(0) } },
+      ],
+      [`user:${bob.userId}/newMessage`, { message: { ...pick('in', 'hi bob'), date: iso(0) } }],
+    ]);
+    assert.equal(pick('in', 'hi bob').date, start);
     assert.deepEqual(await h.call('GET', '/api/user/messages/unread-count', { token: bob.token }), {
       count: 2,
     });
 
     const index = (await h.call('GET', '/api/user/messages/index', { token: bob.token })) as {
-      messages: Array<{ _id: string; message: { text: string } }>;
+      messages: Array<{ _id: string; message: { text: string; date: unknown } }>;
       users: Record<string, { username?: string }>;
     };
     assert.deepEqual(
-      index.messages.map((entry) => [entry._id, entry.message.text]),
+      index.messages.map((entry) => [entry._id, entry.message.text, entry.message.date]),
       [
-        [alice.userId, 'hello alice'],
-        [carol.userId, 'hi from carol'],
+        [alice.userId, 'hello alice', iso(2)],
+        [carol.userId, 'hi from carol', iso(1)],
       ],
     );
     assert.equal(index.users[carol.userId]?.username, 'Carol');
@@ -845,12 +860,12 @@ void describe('messages', () => {
     const list = (await h.call('GET', '/api/user/messages/list', {
       token: bob.token,
       query: { respondent: alice.userId },
-    })) as { messages: Array<{ _id: string; type: string; text: string }> };
+    })) as { messages: Array<{ _id: string; type: string; text: string; date: unknown }> };
     assert.deepEqual(
-      list.messages.map((m) => [m.type, m.text]),
+      list.messages.map((m) => [m.type, m.text, m.date]),
       [
-        ['in', 'hi bob'],
-        ['out', 'hello alice'],
+        ['in', 'hi bob', iso(0)],
+        ['out', 'hello alice', iso(2)],
       ],
     );
 

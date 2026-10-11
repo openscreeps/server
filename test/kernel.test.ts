@@ -1,13 +1,54 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { it } from 'node:test';
-import { gameStateOf, spawnBot } from '@openscreeps/game';
+import {
+  gameStateOf,
+  MAINTENANCE_JOBS,
+  spawnBot,
+  type NotificationBatch,
+  type User,
+} from '@openscreeps/game';
 import { createUser } from '../src/api/users.ts';
 import { createConfig } from '../src/config.ts';
-import { ServerKernel } from '../src/services/server-kernel.service.ts';
+import {
+  defaultCronjobs,
+  MAINTENANCE_INTERVAL,
+  ServerKernel,
+} from '../src/services/server-kernel.service.ts';
+
+const CLOCK = 1_700_000_000_000;
+
+/** Lets every pending promise continuation run (`setImmediate` is never mocked here). */
+function settle(): Promise<void> {
+  const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+  setImmediate(resolve);
+  return promise;
+}
+
+/** Creates a player with an address and one due notification. */
+function notifiedUser(kernel: ServerKernel, username: string): Promise<User> {
+  return kernel.mutate(() => {
+    const user = createUser(kernel, { username, email: `${username}@example.com` });
+    const id = `notification-${username}`;
+    kernel.state.world.notifications[id] = {
+      _id: id,
+      user: user._id,
+      message: `attacked ${username}`,
+      date: kernel.now() - 1,
+      type: 'msg',
+      count: 1,
+    };
+    return user;
+  });
+}
 
 void it('delivers maintenance notifications to account addresses outside the game state', async () => {
+  const now = Date.now();
   const kernel = await ServerKernel.create(
     createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    { now: () => now },
   );
   try {
     const user = await kernel.mutate(() => {
@@ -32,6 +73,11 @@ void it('delivers maintenance notifications to account addresses outside the gam
     assert.equal(kernel.state.notificationOutbox.length, 1);
     assert.equal(kernel.state.notificationOutbox[0]?.userId, user._id);
     assert.equal(kernel.state.notificationOutbox[0].email, 'alice@example.com');
+    const batch = kernel.state.notificationOutbox[0];
+    assert.deepEqual(batch.notifications, [
+      { message: 'attacked', date: now - 1, count: 1, type: 'msg' },
+    ]);
+    assert.ok(tick.maintenance.ran.includes('sendNotifications'));
 
     const game = JSON.stringify(gameStateOf(kernel.state));
     for (const secret of ['passwordHash', 'token-hash', 'alice@example.com', 'profiles']) {
@@ -113,5 +159,327 @@ void it('rejects malformed nested snapshots before replacing a usable world', as
     assert.equal(kernel.state.world.gameTime, committed.world.gameTime + 1);
   } finally {
     await kernel.close();
+  }
+});
+
+void it('runs due maintenance on its own wall clock while the world is paused', async (t) => {
+  let clock = CLOCK;
+  let probe: PromiseWithResolvers<void> = Promise.withResolvers();
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    {
+      now: () => clock,
+      cronjobs: (context) => ({
+        ...defaultCronjobs(context),
+        probe: {
+          interval: 0,
+          run: () => {
+            probe.resolve();
+          },
+        },
+      }),
+    },
+  );
+  try {
+    const user = await notifiedUser(kernel, 'alice');
+    await kernel.mutate(() => {
+      kernel.state.tokens.expired = { userId: user._id, expires: clock - 1 };
+    });
+    const gameTime = kernel.state.world.gameTime;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    kernel.start();
+    assert.equal(kernel.state.jobs['cron:sendNotifications'], undefined);
+
+    t.mock.timers.tick(MAINTENANCE_INTERVAL);
+    await probe.promise;
+    await kernel.read(() => undefined);
+    assert.equal(kernel.state.world.gameTime, gameTime, 'a paused world does not tick');
+    for (const name of Object.keys(MAINTENANCE_JOBS)) {
+      assert.equal(kernel.state.jobs[`cron:${name}`], clock, name);
+    }
+    assert.equal(kernel.state.tokens.expired, undefined);
+    assert.equal(kernel.state.notificationOutbox.length, 1);
+    assert.deepEqual(kernel.state.notificationOutbox[0]?.notifications, [
+      { message: 'attacked alice', date: clock - 1, count: 1, type: 'msg' },
+    ]);
+
+    // Only the jobs whose interval elapsed run again: roomsForceUpdate every 20 s, not hourly ones.
+    await settle();
+    const first = clock;
+    clock += 21000;
+    probe = Promise.withResolvers();
+    t.mock.timers.tick(MAINTENANCE_INTERVAL);
+    await probe.promise;
+    await kernel.read(() => undefined);
+    assert.equal(kernel.state.jobs['cron:roomsForceUpdate'], clock);
+    assert.equal(kernel.state.jobs['cron:sendNotifications'], first);
+    assert.equal(kernel.state.jobs['cron:purgeTransactions'], first);
+    assert.equal(kernel.state.world.gameTime, gameTime);
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('serializes maintenance with ticks and runs each due job once', async () => {
+  const entered: PromiseWithResolvers<void> = Promise.withResolvers();
+  const gate: PromiseWithResolvers<void> = Promise.withResolvers();
+  const order: string[] = [];
+  let runs = 0;
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    {
+      now: () => CLOCK,
+      cronjobs: (context) => ({
+        ...defaultCronjobs(context),
+        slow: {
+          interval: 60,
+          run: async () => {
+            runs++;
+            order.push('slow:start');
+            entered.resolve();
+            await gate.promise;
+            // Kernel calls made by a job join its mutation instead of deadlocking behind it.
+            const time = await context.read(() => context.state.world.gameTime);
+            await context.mutate(() => {
+              context.state.jobs['test:nested'] = time;
+            });
+            order.push('slow:end');
+          },
+        },
+      }),
+    },
+  );
+  try {
+    kernel.events.on('tick', () => order.push('tick'));
+    const gameTime = kernel.state.world.gameTime;
+    const pass = kernel.maintain();
+    await entered.promise;
+    const step = kernel.step();
+    await settle();
+    assert.equal(kernel.state.world.gameTime, gameTime, 'the tick waits for the pass');
+    assert.deepEqual(order, ['slow:start']);
+    gate.resolve();
+    const [report, tick] = await Promise.all([pass, step]);
+    assert.deepEqual(report.ran, [...Object.keys(MAINTENANCE_JOBS), 'slow']);
+    assert.deepEqual(report.errors, []);
+    assert.deepEqual(tick.maintenance.ran, [], 'no job is due again at the same instant');
+    assert.deepEqual(order, ['slow:start', 'slow:end', 'tick']);
+    assert.equal(runs, 1);
+    assert.equal(kernel.state.jobs['test:nested'], gameTime);
+    assert.equal(kernel.state.world.gameTime, gameTime + 1);
+    assert.deepEqual(await kernel.maintain(), { ran: [], errors: [], notifications: [] });
+    await assert.rejects(
+      kernel.read(() => kernel.mutate(() => undefined)),
+      /Cannot mutate the world inside a read/,
+    );
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('rolls back only a failing maintenance job and keeps its schedule', async () => {
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    {
+      now: () => CLOCK,
+      cronjobs: (context) => ({
+        broken: {
+          interval: 60,
+          run: () => {
+            context.state.jobs['test:partial'] = 1;
+            context.publish('test:partial', 1);
+            throw new Error('boom');
+          },
+        },
+        after: {
+          interval: 60,
+          run: () => {
+            context.state.jobs['test:after'] = 1;
+          },
+        },
+      }),
+    },
+  );
+  try {
+    const errors: Error[] = [];
+    const messages: string[] = [];
+    kernel.events.on('error', (error) => errors.push(error));
+    kernel.events.on('message', (channel) => messages.push(channel));
+    const report = await kernel.maintain();
+    assert.deepEqual(report.ran, ['broken', 'after']);
+    assert.deepEqual(
+      report.errors.map(({ job }) => job),
+      ['broken'],
+    );
+    assert.equal(kernel.state.jobs['test:partial'], undefined);
+    assert.equal(kernel.state.jobs['test:after'], 1);
+    assert.equal(kernel.state.jobs['cron:broken'], CLOCK);
+    assert.equal(kernel.state.jobs['cron:sendNotifications'], undefined, 'built-ins replaced');
+    assert.deepEqual(messages, []);
+    assert.match(errors[0]?.message ?? '', /Maintenance job failed: broken/);
+    assert.deepEqual((await kernel.maintain()).ran, []);
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('delivers notifications generated outside ticks and retries failed deliveries', async () => {
+  const firstAttempt: PromiseWithResolvers<void> = Promise.withResolvers();
+  const delivered: NotificationBatch[] = [];
+  let attempts = 0;
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    {
+      now: () => CLOCK,
+      deliverNotifications: (batch) => {
+        attempts++;
+        if (attempts === 1) {
+          firstAttempt.resolve();
+          return Promise.reject(new Error('mail server down'));
+        }
+        delivered.push(batch);
+        return Promise.resolve();
+      },
+    },
+  );
+  try {
+    const errors: Error[] = [];
+    kernel.events.on('error', (error) => errors.push(error));
+    const user = await notifiedUser(kernel, 'alice');
+    await assert.rejects(kernel.runCronjob('missing'), /^Error: Cronjob "missing" not found$/);
+    await kernel.runCronjob('sendNotifications');
+    assert.equal(kernel.state.jobs['cron:sendNotifications'], undefined, 'schedule untouched');
+
+    // The commit that queued the batch starts delivery; a failure keeps the batch queued.
+    await firstAttempt.promise;
+    await settle();
+    assert.equal(kernel.state.notificationOutbox.length, 1);
+    assert.match(errors[0]?.message ?? '', /Notification delivery failed/);
+
+    await kernel.flushNotifications();
+    assert.equal(attempts, 2);
+    assert.deepEqual(kernel.state.notificationOutbox, []);
+    assert.equal(delivered.length, 1);
+    const [batch] = delivered;
+    assert.ok(batch);
+    assert.deepEqual(
+      { userId: batch.userId, email: batch.email, messages: batch.messages, date: batch.date },
+      {
+        userId: user._id,
+        email: 'alice@example.com',
+        messages: ['attacked alice\n[msg] (1)'],
+        date: CLOCK,
+      },
+    );
+    assert.deepEqual(batch.notifications, [
+      { message: 'attacked alice', date: CLOCK - 1, count: 1, type: 'msg' },
+    ]);
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('upgrades queued notification batches persisted without source details', async () => {
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+  );
+  try {
+    const committed = await kernel.exportSnapshot();
+    const legacy = { id: 'legacy', userId: 'user', messages: ['hi\nthere\n[attack] (3)', 'plain'] };
+    await kernel.importSnapshot({ ...committed, notificationOutbox: [{ ...legacy, date: 5 }] });
+    assert.deepEqual(kernel.state.notificationOutbox[0]?.notifications, [
+      { message: 'hi\nthere', date: 5, count: 3, type: 'attack' },
+      { message: 'plain', date: 5, count: 1, type: 'msg' },
+    ]);
+    await assert.rejects(
+      kernel.importSnapshot({
+        ...committed,
+        notificationOutbox: [{ ...legacy, date: 5, notifications: [] }],
+      }),
+      /Invalid notification outbox/,
+    );
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('stops wall-clock work on close after in-flight work commits', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'openscreeps-kernel-'));
+  const config = createConfig({
+    database: join(directory, 'world.sqlite'),
+    worldSize: 2,
+    paused: true,
+  });
+  let clock = CLOCK;
+  let passes = 0;
+  const passing: PromiseWithResolvers<void> = Promise.withResolvers();
+  const gate: PromiseWithResolvers<void> = Promise.withResolvers();
+  const delivering: PromiseWithResolvers<void> = Promise.withResolvers();
+  const release: PromiseWithResolvers<void> = Promise.withResolvers();
+  const delivered: string[] = [];
+  const kernel = await ServerKernel.create(config, {
+    now: () => clock,
+    cronjobs: (context) => ({
+      ...defaultCronjobs(context),
+      probe: {
+        interval: 0,
+        run: async () => {
+          passes++;
+          if (passes === 2) {
+            passing.resolve();
+            await gate.promise;
+          }
+        },
+      },
+    }),
+    deliverNotifications: async (batch) => {
+      delivered.push(batch.userId);
+      delivering.resolve();
+      await release.promise;
+    },
+  });
+  try {
+    await notifiedUser(kernel, 'alice');
+    await notifiedUser(kernel, 'bob');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    kernel.start();
+
+    // The first pass queues two batches; delivering the first one blocks outside the lock.
+    t.mock.timers.tick(MAINTENANCE_INTERVAL);
+    await delivering.promise;
+    await settle();
+    assert.equal(kernel.state.notificationOutbox.length, 2);
+    // A second pass runs meanwhile and blocks inside its mutation.
+    clock += 1;
+    t.mock.timers.tick(MAINTENANCE_INTERVAL);
+    await passing.promise;
+
+    const closing = kernel.close();
+    assert.equal(kernel.healthy, false);
+    gate.resolve();
+    release.resolve();
+    await closing;
+    assert.equal(delivered.length, 1, 'no new delivery starts while closing');
+    t.mock.timers.tick(10 * MAINTENANCE_INTERVAL);
+    assert.equal(passes, 2, 'no pass runs after close');
+    await assert.rejects(
+      kernel.read(() => undefined),
+      /Server is closing/,
+    );
+    t.mock.timers.reset();
+
+    const reopened = await ServerKernel.create(config);
+    try {
+      assert.equal(reopened.state.jobs['cron:probe'], clock, 'the in-flight pass committed');
+      assert.equal(reopened.state.notificationOutbox.length, 1, 'the delivered batch was removed');
+      assert.notEqual(reopened.state.notificationOutbox[0]?.userId, delivered[0]);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    gate.resolve();
+    release.resolve();
+    await kernel.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

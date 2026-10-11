@@ -17,6 +17,7 @@ import type { ApiContext, ServerEvents, ServerState, TickEvent } from '../src/co
 import { htmlEncode } from '../src/realtime/encode.ts';
 import { RealtimeHub } from '../src/realtime/hub.ts';
 import { installRealtime } from '../src/realtime/index.ts';
+import { MessagesService } from '../src/services/messages.ts';
 
 const ALICE = 'a12';
 /** A prefix of Alice's id: upstream let `user:a1` subscribe to `user:a12/...`. */
@@ -355,8 +356,8 @@ function connect(hub: RealtimeHub): TestClient {
   };
 }
 
-function startHub(h: Harness): RealtimeHub {
-  const hub = new RealtimeHub(h.context);
+function startHub(h: Harness, random?: () => number): RealtimeHub {
+  const hub = new RealtimeHub(h.context, random);
   cleanup.push(() => {
     hub.close();
   });
@@ -639,29 +640,66 @@ void describe('realtime sessions', () => {
     assert.deepEqual(client.inbox.events(`user:${ALICE}/console`), []);
   });
 
-  void it('serves the two oldest room subscriptions of a user and the next one when one leaves', async () => {
+  void it('serves two of a user’s rooms per update in a new random room order', async () => {
     const h = harness();
-    const hub = startHub(h);
+    // `_.shuffle` draws, one per subscribed room; position i swaps with floor(draw * (i + 1)).
+    const draws: number[] = [];
+    const hub = startHub(h, () => {
+      const draw = draws.shift();
+      if (draw === undefined) throw new Error('unplanned room order draw');
+      return draw;
+    });
     const first = connect(hub);
     const second = connect(hub);
-    await signIn(h, first, ALICE);
-    await signIn(h, second, ALICE);
+    const third = connect(hub);
+    for (const client of [first, second, third]) await signIn(h, client, ALICE);
+    // Before any update counted Alice's rooms, every subscription gets its full room at once.
     first.send('subscribe room:W1N1');
     await first.inbox.event('room:W1N1');
     first.send('subscribe room:W2N1');
     await first.inbox.event('room:W2N1');
     second.send('subscribe room:W3N1');
-    assert.equal(await second.inbox.event('err@room:W3N1'), 'subscribe limit reached');
+    await second.inbox.event('room:W3N1');
     second.send('subscribe room:W9N9');
 
-    first.send('unsubscribe room:W1N1');
-    const gameTime = await h.tick();
-    const room = await second.inbox.event('room:W3N1', atGameTime(gameTime));
-    assert.deepEqual(field(room, 'objects'), { c3: h.state.world.roomObjects.c3 });
-    assert.deepEqual(Object.keys(field(room, 'users') as object).sort(), ['2', '3', ALICE]);
-    await first.inbox.event('room:W2N1', atGameTime(gameTime));
-    assert.equal(first.inbox.events('room:W1N1').length, 1);
+    // Order W3N1, W2N1, W1N1: the oldest subscription is the one skipped.
+    draws.push(0, 0.5, 0);
+    const skipOldest = await h.tick();
+    await first.inbox.event('room:W2N1', atGameTime(skipOldest));
+    await second.inbox.event('room:W3N1', atGameTime(skipOldest));
+    assert.equal(await first.inbox.event('err@room:W1N1'), 'subscribe limit reached');
+    assert.deepEqual(first.inbox.events('room:W1N1').filter(atGameTime(skipOldest)), []);
+
+    // The latest update counted three rooms: a new subscription waits for an update.
+    third.send('subscribe room:W1N1');
+    assert.equal(await third.inbox.event('err@room:W1N1'), 'subscribe limit reached');
+    assert.deepEqual(third.inbox.events('room:W1N1'), []);
+
+    // Order W1N1, W2N1, W3N1: both W1N1 subscriptions fill the limit, the others are skipped.
+    draws.push(0, 0.99, 0.99);
+    const skipNewest = await h.tick();
+    const resumed = await first.inbox.event('room:W1N1', atGameTime(skipNewest));
+    assert.deepEqual(field(resumed, 'objects'), {});
+    const joined = await third.inbox.event('room:W1N1', atGameTime(skipNewest));
+    assert.deepEqual(Object.keys(field(joined, 'objects') as object).sort(), [
+      'c1',
+      'i1',
+      'k1',
+      's1',
+    ]);
+    assert.equal(await first.inbox.event('err@room:W2N1'), 'subscribe limit reached');
+    assert.equal(await second.inbox.event('err@room:W3N1'), 'subscribe limit reached');
+    assert.deepEqual(first.inbox.events('room:W2N1').filter(atGameTime(skipNewest)), []);
+    assert.deepEqual(second.inbox.events('room:W3N1').filter(atGameTime(skipNewest)), []);
+
+    // Skipped subscriptions are told again on every update, like upstream.
+    draws.push(0, 0.99, 0.99);
+    const again = await h.tick();
+    await third.inbox.event('room:W1N1', atGameTime(again));
+    assert.equal(await first.inbox.event('err@room:W2N1'), 'subscribe limit reached');
+    assert.equal(await second.inbox.event('err@room:W3N1'), 'subscribe limit reached');
     assert.deepEqual(second.inbox.events('room:W9N9'), []);
+    assert.deepEqual(second.inbox.events('err@room:W9N9'), []);
   });
 
   void it('resolves code publications from the committed branch of the subscriber', async () => {
@@ -907,6 +945,52 @@ void describe('SockJS endpoint', () => {
     assert.equal(client.inbox.events('room:W1N1').filter(atGameTime(later)).length, 0);
     client.socket.close();
     await client.inbox.closing.promise;
+  });
+
+  void it('delivers sent messages with ISO dates to both parties over real sockets', async () => {
+    const h = harness();
+    const base = await listen(h);
+    const open = async (userId: string, channels: string[]): Promise<SockClient> => {
+      const client = new SockClient(`${base}/socket`, 'websocket');
+      await client.opened;
+      client.socket.send(`auth ${await h.token(userId)}`);
+      for (const channel of channels) client.socket.send(`subscribe ${channel}`);
+      // Commands run in order: a second authentication reply proves the subscriptions happened.
+      client.socket.send(`auth ${await h.token(userId)}`);
+      await client.inbox.next((line) => line.startsWith('auth ok '), 'first auth ok');
+      await client.inbox.next((line) => line.startsWith('auth ok '), 'second auth ok');
+      return client;
+    };
+    const alice = await open(ALICE, [`user:${ALICE}/message:${BOB}`]);
+    const bob = await open(BOB, [`user:${BOB}/message:${ALICE}`, `user:${BOB}/newMessage`]);
+
+    await h.context.mutate(() =>
+      new MessagesService(h.context).send({
+        query: new URLSearchParams(),
+        body: { respondent: BOB, text: 'hi bob' },
+        userId: ALICE,
+        headers: {},
+      }),
+    );
+    const stored = Object.values(h.state.messages);
+    const outMessage = stored.find((message) => message.type === 'out');
+    const inMessage = stored.find((message) => message.type === 'in');
+    assert.ok(outMessage && inMessage);
+    assert.equal(typeof inMessage.date, 'number');
+    const iso = new Date(inMessage.date).toISOString();
+    assert.deepEqual(await alice.inbox.event(`user:${ALICE}/message:${BOB}`), {
+      message: { ...outMessage, date: iso },
+    });
+    assert.deepEqual(await bob.inbox.event(`user:${BOB}/message:${ALICE}`), {
+      message: { ...inMessage, date: iso },
+    });
+    assert.deepEqual(await bob.inbox.event(`user:${BOB}/newMessage`), {
+      message: { ...inMessage, date: iso },
+    });
+    assert.deepEqual(
+      bob.inbox.lines.flatMap((line) => parseEvent(line)?.[0] ?? []),
+      [`user:${BOB}/message:${ALICE}`, `user:${BOB}/newMessage`],
+    );
   });
 
   for (const transport of ['xhr-streaming', 'xhr-polling']) {

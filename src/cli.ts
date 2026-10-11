@@ -22,6 +22,7 @@ import { databaseLabel } from './database.ts';
 import { ServerKernel } from './services/server-kernel.service.ts';
 import { StateStore } from './services/state-store.service.ts';
 import { createServer, type RunningServer } from './server.ts';
+import { originalConfig } from './compatibility/original-config.ts';
 
 const PROGRAM = 'openscreeps-server';
 const MINIMUM_TOKEN_LENGTH = 32;
@@ -65,7 +66,52 @@ type Command = LocalCommand | RemoteCommand;
 
 const HELP_OPTION: OptionTable = { help: { type: 'boolean', help: 'Show this help' } };
 
-const SERVER_OPTIONS: OptionTable = {
+const SERVER_OPTIONS = {
+  config: {
+    type: 'string',
+    value: 'FILE',
+    help: 'Original .screepsrc settings; defaults to ./.screepsrc when present',
+  },
+  mods: { type: 'string', value: 'FILE', help: 'Load original trusted mods.json (MODFILE)' },
+  'original-db': {
+    type: 'string',
+    value: 'FILE',
+    help: 'Import original LokiJS db.json only into an empty world (DB_PATH)',
+  },
+  'cli-host': {
+    type: 'string',
+    value: 'HOST',
+    help: 'Trusted original JavaScript CLI address (CLI_HOST; default 127.0.0.1)',
+  },
+  'cli-port': {
+    type: 'string',
+    value: 'PORT',
+    help: 'Enable original trusted JavaScript CLI (CLI_PORT)',
+  },
+  runners: { type: 'string', value: 'N', help: 'Player runner child processes (RUNNERS_CNT)' },
+  'runner-threads': {
+    type: 'string',
+    value: 'N',
+    help: 'Concurrent player runs per runner (RUNNER_THREADS)',
+  },
+  processors: {
+    type: 'string',
+    value: 'N',
+    help: 'Concurrent room processor child processes (PROCESSORS_CNT)',
+  },
+  'worker-restart-interval': {
+    type: 'string',
+    value: 'SECONDS',
+    help: 'Drain and recycle workers periodically; 0 disables recycling',
+  },
+  'log-directory': { type: 'string', value: 'DIR', help: 'Worker logs directory' },
+  'log-console': { type: 'boolean', help: 'Also print child process output to the terminal' },
+  'log-rotate-keep': { type: 'string', value: 'N', help: 'Rotated worker log files to retain' },
+  'steam-greenworks': {
+    type: 'string',
+    value: 'PATH',
+    help: 'Opt in to original native Steam encrypted-ticket authentication (STEAM_GREENWORKS)',
+  },
   host: { type: 'string', value: 'HOST', help: 'Listen address (GAME_HOST; default 127.0.0.1)' },
   port: {
     type: 'string',
@@ -114,9 +160,10 @@ const SERVER_OPTIONS: OptionTable = {
     value: 'TOKEN',
     help: 'Admin API token, 32+ characters; prefer SCREEPS_ADMIN_TOKEN or the token file',
   },
-};
+} satisfies OptionTable;
 
 const CONNECTION_OPTIONS: OptionTable = {
+  config: SERVER_OPTIONS.config,
   url: {
     type: 'string',
     value: 'URL',
@@ -274,6 +321,29 @@ function createAdminTokenFile(file: string): boolean {
 /** Configuration from the environment overlaid with explicit server options. */
 function serverOverrides(input: Invocation): Partial<ServerConfig> {
   const overrides: Partial<ServerConfig> = {};
+  for (const [option, key] of Object.entries({
+    mods: 'modFile',
+    'original-db': 'originalDatabase',
+    'cli-host': 'cliHost',
+    'log-directory': 'logDirectory',
+    'steam-greenworks': 'steamGreenworks',
+  } as const)) {
+    const value = stringOption(input, option);
+    if (value !== undefined) overrides[key] = value;
+  }
+  for (const [option, key] of Object.entries({
+    'cli-port': 'cliPort',
+    runners: 'runnerCount',
+    'runner-threads': 'runnerThreads',
+    processors: 'processorCount',
+    'worker-restart-interval': 'workerRestartInterval',
+    'log-rotate-keep': 'logRotateKeep',
+  } as const)) {
+    const value = integerOption(input, option);
+    if (value !== undefined) overrides[key] = value;
+  }
+  const logConsole = booleanOption(input, 'log-console');
+  if (logConsole !== undefined) overrides.logConsole = logConsole;
   const host = stringOption(input, 'host');
   if (host !== undefined) overrides.host = host;
   const port = integerOption(input, 'port');
@@ -304,7 +374,13 @@ function serverOverrides(input: Invocation): Partial<ServerConfig> {
 }
 
 function serverConfig(input: Invocation, overrides: Partial<ServerConfig>): ServerConfig {
-  const config = createConfig({ ...configFromEnvironment(input.environment), ...overrides });
+  const file =
+    stringOption(input, 'config') ?? (existsSync('.screepsrc') ? '.screepsrc' : undefined);
+  const config = createConfig({
+    ...(file === undefined ? {} : originalConfig(file)),
+    ...configFromEnvironment(input.environment),
+    ...overrides,
+  });
   config.database = resolve(config.database);
   return config;
 }
@@ -621,6 +697,23 @@ const COMMANDS = new Map<string, Command>([
       options: INIT_OPTIONS,
       positionals: [0, 0],
       run: initialize,
+    },
+  ],
+  [
+    'migrate-original',
+    {
+      kind: 'local',
+      arguments: 'FILE',
+      summary: 'Import an original LokiJS world into a new database without changing the source',
+      options: {},
+      positionals: [1, 1],
+      run: async (input) => {
+        await initialize({
+          ...input,
+          positionals: [],
+          values: { ...input.values, 'original-db': positional(input, 0) },
+        });
+      },
     },
   ],
   [
@@ -1076,7 +1169,7 @@ export function parseInvocation(
   }
   const command = COMMANDS.get(name);
   if (command === undefined) throw new UsageError(`Unknown command "${name}"`);
-  const table = {
+  const table: OptionTable = {
     ...(command.kind === 'local' ? SERVER_OPTIONS : CONNECTION_OPTIONS),
     ...command.options,
     ...HELP_OPTION,

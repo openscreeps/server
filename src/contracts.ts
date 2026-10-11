@@ -7,6 +7,8 @@ import type {
   User,
 } from '@openscreeps/game';
 import type { EventEmitter } from 'node:events';
+import type { OriginalStorageData } from './compatibility/original-storage.ts';
+import type { OriginalMods } from './compatibility/original-mods.ts';
 
 export interface UserProfile {
   email?: string;
@@ -47,6 +49,8 @@ export interface ServerState extends GameState {
   notificationOutbox: NotificationBatch[];
   paused: boolean;
   tickDuration: number;
+  /** Extra original/mod collections and environment values not represented by canonical state. */
+  originalStorage?: OriginalStorageData;
 }
 export interface ServerConfig {
   host: string;
@@ -63,7 +67,24 @@ export interface ServerConfig {
   serverPassword?: string;
   adminToken?: string;
   steamKey?: string;
+  /** Explicit opt-in Greenworks module path for original native Steam encrypted-ticket login. */
+  steamGreenworks?: string;
   assetDirectory?: string;
+  /** Original mods.json; loaded as trusted operator code, once per hosted world. */
+  modFile?: string;
+  /** Original LokiJS database imported only when the target SQL world is empty. */
+  originalDatabase?: string;
+  /** Original trusted JavaScript CLI; disabled unless a port is explicitly configured. */
+  cliPort?: number;
+  cliHost?: string;
+  runnerCount?: number;
+  runnerThreads?: number;
+  processorCount?: number;
+  /** Worker lifetime in seconds; zero disables scheduled recycling. */
+  workerRestartInterval?: number;
+  logDirectory?: string;
+  logConsole?: boolean;
+  logRotateKeep?: number;
   welcomeText: string;
   historyChunkSize: number;
   historyTicks: number;
@@ -83,9 +104,10 @@ export interface ServerEvents {
 export interface ServerContext extends GameContext<ServerState> {
   readonly config: ServerConfig;
   readonly events: EventEmitter<ServerEvents>;
-  /** Serialize reads with ticks. Call only from outside a read/mutate callback. */
+  readonly mods?: OriginalMods;
+  /** Serialize reads with ticks; nested reads join an active transaction. */
   read<T>(operation: () => T | Promise<T>): Promise<T>;
-  /** Serialize, durably commit, then publish events. Never nest calls. */
+  /** Serialize and durably commit; nested writes join a mutation and are rejected inside a read. */
   mutate<T>(operation: () => T | Promise<T>): Promise<T>;
   publish(channel: string, data: unknown): void;
   /** Call after changing room terrain inside a mutation; refreshes pathfinding before next tick. */

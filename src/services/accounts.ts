@@ -34,10 +34,11 @@ import {
   type ServerContext,
   type ServerState,
 } from '../contracts.ts';
-import { verifyPassword, verifySteamTicket } from '../api/auth.ts';
+import { verifyPassword } from '../api/auth.ts';
 import { EMPTY_BADGE_SVG, getBadgeSvg, parseSubmittedBadge, readBadge } from '../api/badge.ts';
 import { createUser, EMAIL_PATTERN, findUserIdByEmail, findUserIdBySteamId } from '../api/users.ts';
 import { SERVER_CONTEXT } from '../api/transport.ts';
+import { SteamAuthService } from './native-steam.ts';
 
 const MAX_CODE_SIZE = 5 * 1024 * 1024;
 const MAX_MEMORY_SIZE = 1024 * 1024;
@@ -130,7 +131,10 @@ function controllerRooms(state: ServerState, userId: string): string[] {
 
 @Injectable()
 export class AccountsService {
-  constructor(@Inject(SERVER_CONTEXT) readonly context: ApiContext) {}
+  constructor(
+    @Inject(SERVER_CONTEXT) readonly context: ApiContext,
+    @Inject(SteamAuthService) readonly steam: SteamAuthService,
+  ) {}
 
   me(request: ApiRequest) {
     const user = requireUser(request, this.context);
@@ -183,13 +187,8 @@ export class AccountsService {
   }
 
   async steamTicket(request: ApiRequest) {
-    if (request.body.useNativeAuth) {
-      throw new ApiError('authentication method is not supported');
-    }
-    const { ticket } = request.body;
-    if (typeof ticket !== 'string') throw new ApiError('could not authenticate');
     // External verification runs before acquiring the world lock.
-    const steamId = await verifySteamTicket(ticket, this.context.config.steamKey);
+    const steamId = await this.steam.authenticate(request.body);
     return this.context.mutate(() => {
       const userId =
         findUserIdBySteamId(this.context.state, steamId) ??

@@ -15,7 +15,10 @@ npm run check
 ```
 
 Node 24.21.0 is pinned in `mise.toml`. The server pins the game dependency to a Git
-revision; the game pins and owns its engine dependency. Both build during installation.
+revision; the game pins and owns its engine dependency. `mise run install` runs
+`npm ci` from this repository, fetching both packages and compiling their sources
+through their `prepare` scripts. No sibling checkouts are required. Installation
+needs Git and network access to GitHub and the npm registry.
 `isolated-vm` needs a supported prebuilt binary or a native build toolchain.
 Checks include strict TypeScript, type-aware ESLint, Prettier, behavioral tests
 and declaration compilation.
@@ -31,7 +34,9 @@ and delegate to injectable classes in `src/services/`. There is no catch-all API
 dispatcher. Guards validate credentials; `ApiInterceptor` holds the world's read or
 mutation lock while invoking ordinary API operations, then serializes the committed
 result. Steam verification runs outside that lock and commits through its service.
-Admin operations own their transactions. Never nest `read` or `mutate` calls.
+Admin operations own their transactions. Nested reads join the current transaction;
+nested mutations join a mutation but are rejected inside a read. Detached callbacks
+cannot retain a transaction after its owning operation settles.
 
 `ServerKernel` composes `@openscreeps/game`'s `GameSession` rather than implementing
 another tick loop. World generation, NPC maintenance, players, code branches and
@@ -56,7 +61,7 @@ TypeORM peer override selects this driver without disabling peer checks globally
 Keep the SQLite integration and container checks when updating either dependency.
 
 When embedding under npm's strict install-script policy, the consumer's policy
-must approve the pinned game and engine Git builds and the used native drivers.
+must approve the local game/engine source paths and the used native drivers.
 TypeORM may install its older SQLite peer because dependency-level overrides do
 not propagate to consumers. That unused peer's build can be denied: the server
 explicitly injects its own `better-sqlite3` 13 driver.
@@ -80,6 +85,10 @@ and `activeSim` fields rather than inventing defaults. Room opening/closing is
 a no-op for missing rooms; removal passes the complete game state so pending
 room intents are removed too. Removal deliberately retains users' room lists,
 active-room scheduling and prior room event logs, as the original does.
+
+Message dates are projected to ISO strings on HTTP and socket responses without
+changing their stored numeric dates. Room subscriptions are selected on each
+update, with the original two-room limit per user across all connections.
 
 ### Retained divergence: atomic request rollback ([server#4](https://github.com/openscreeps/server/issues/4))
 
@@ -159,19 +168,99 @@ an exclusive connection lock; PostgreSQL uses a session advisory lock. Revision
 checks reject writes if another writer bypasses that ownership. PostgreSQL does
 not enable multiple simulation processes to share a world.
 
+## Original standalone installations
+
+### World and configuration migration
+
+Stop the original server or take a consistent backup of its LokiJS `db.json`.
+Import into a new SQLite database (or a new PostgreSQL world):
+
+```sh
+npm run cli -- migrate-original /path/to/db.json --database data/imported.sqlite
+npm run cli -- start --database data/imported.sqlite --paused
+```
+
+The source file is never modified. Original database upgrades through version 9
+run before conversion. The import preserves rooms, terrain, objects and their
+processing order, users/profiles, branches, memory/segments, CPU buckets, queued
+intents, market data and stored history. Mod collections and noncanonical env
+values are retained in the snapshot. Unsupported or malformed records reject
+the import rather than silently losing data.
+
+The report identifies upgrades, reset heaps, revoked original bearer tokens,
+recomputed caches and retained compatibility data. Original process heaps and
+cron timers cannot be imported. Unsupported password-hash formats are rejected;
+Steam identities and this server's own password hashes are preserved.
+
+`start --original-db FILE` also imports, but only when the target world is empty.
+Once committed, restarts read the SQL world and no longer require the source.
+The CLI reads `--config FILE`, or `./.screepsrc` when present. Original `db` means
+a LokiJS input, never a SQLite file; its default destination is `db.json.sqlite`.
+Paths resolve relative to the configuration file. Explicit flags override
+environment variables, which override `.screepsrc`.
+
+### Trusted mods and original JavaScript CLI
+
+`--mods /path/to/mods.json` loads the original `{mods: [...], bots: {...}}` manifest.
+CommonJS mods initialize synchronously with world-local configuration and module
+state. The `@screeps/common` and `@screeps/driver` bindings expose canonical
+collection/env/pubsub/queue storage, constants, driver reads and extension hooks.
+There is no separate mod database competing with the live world.
+
+Supported extension paths include HTTP pre/post configuration and `/api` routes,
+socket module factories, welcome text, renderer/custom-object metadata, custom
+prototypes and intents, processor events, per-tick `playerSandbox`, player
+selection, room history, cron overrides, notification delivery and CLI sandbox
+extensions. Bot modules from the manifest are reloaded at startup. With workers,
+mods load separately in each process and use asynchronous IPC for canonical
+storage; do not synchronously wait for host storage from a processing hook.
+
+Enable the original TCP JavaScript administration interface explicitly:
+
+```sh
+npm run cli -- start --mods /path/to/mods.json --cli-port 21026
+```
+
+It exposes persistent per-connection JavaScript, `help()`, `storage`, `system`,
+`map`, `bots` and `strongholds`, including mod-provided sandbox methods.
+It defaults to loopback and has **no authentication or encryption**, like the
+original. Never expose it to untrusted networks. Mods and CLI scripts have the
+operator's privileges; neither is a sandbox for untrusted code. The authenticated
+HTTP admin interface remains available.
+
+### Supervised execution
+
+```sh
+npm run cli -- start --runners 2 --runner-threads 4 --processors 2 \
+  --worker-restart-interval 3600 --log-directory logs
+```
+
+Runners retain one isolate per player and restart after crashes. Periodic recycling
+drains outstanding work before replacement; zero disables it. Processor crashes
+retry the affected room once. `--log-rotate-keep N` retains old worker logs;
+`--log-console` also forwards them to the terminal. Shutdown drains work and closes
+the processes before releasing the database.
+
+Omitting the counts retains deterministic in-process execution. Parallel processors
+read rooms at the start of the stage and apply their results before the global
+stage. They use separate random streams: their random draws and within-tick
+cross-room observations need not match sequential execution. SQL commits still
+have one owner; this is not a distributed multi-writer database.
+
 ## Containers
 
-`Dockerfile` builds a production image on `node:24.21.0-bookworm-slim`. The
-build stage installs Git (for the pinned engine revision and its `prepare`
-build) and a C++ toolchain for `isolated-vm` and `better-sqlite3` when no
-prebuilt binary fits, runs `npm ci` with strict `allowScripts` enforcement,
-compiles `dist/` from source and prunes development dependencies. The runtime
-stage contains production dependencies, compiled output and `libstdc++6`, but no
-compiler. It runs `node --no-node-snapshot dist/cli.js start` as the unprivileged
-`node` user (uid 1000) and keeps all state in `/data`. Building needs Docker
-with BuildKit, Compose v2.17 or later, and network access to the npm registry
-and GitHub. The build context is an allow-list (`.dockerignore`): host
-`node_modules`, `dist`, `data` and `.env` files are never sent.
+`Dockerfile` builds a production image on `node:24.21.0-bookworm-slim` with this
+server directory as its build context. `.dockerignore` admits only production build
+inputs, excluding host dependencies, generated files, worlds and credentials.
+The build stage installs Git to fetch the commit-pinned game and engine packages
+over anonymous HTTPS, plus a C++ toolchain when native prebuilds are unavailable.
+It runs `npm ci` with strict `allowScripts` enforcement (including the Git
+dependencies' `prepare` builds), compiles the server and prunes development
+dependencies. The runtime contains one server tree with game and engine installed
+in `node_modules`; it includes `libstdc++6`, but no Git or compiler, and runs
+`node --no-node-snapshot dist/cli.js start` as uid 1000 with state in `/data`.
+Building needs Docker with BuildKit, Compose v2.17 or later, and network access to
+GitHub and the npm registry; no GitHub credentials or sibling checkouts are needed.
 
 ```sh
 docker compose build
@@ -298,11 +387,30 @@ accordingly.
 
 ## Official client and authentication
 
-Connect the official Screeps client to the server address. Steam sign-in uses
-Valve's `AuthenticateUserTicket` Web API for app 464350 and requires a valid
-operator-provided `STEAM_KEY`. `/api/version` advertises Web API authentication,
-not the legacy native encrypted-ticket scheme. Missing credentials and failed
-verification reject login; there is no assumed Steam identity or bypass.
+Connect the official Screeps client to the server address. The recommended Steam
+sign-in mode uses Valve's `AuthenticateUserTicket` Web API for app 464350 and an
+operator-provided `STEAM_KEY`. Missing credentials and failed verification reject
+login; there is no assumed Steam identity or bypass.
+
+Original native encrypted-ticket authentication is an explicit opt-in:
+`--steam-greenworks /path/to/greenworks.js` (or `STEAM_GREENWORKS`). Supply a
+compatible Greenworks/Steamworks binary and a running Steam client owning Screeps.
+Startup checks the SDK and app id; `/api/version` then advertises
+`useNativeAuth: true`. `STEAM_KEY` and native mode cannot be configured together.
+The SDK is not bundled with this server.
+
+**Native tickets use the symmetric key published in the original source. Anyone
+with that key can forge identities. Use Web API authentication for untrusted
+players; native mode preserves the original trust model, not secure public login.**
+
+To exercise the installed SDK, set `OPENSCREEPS_GREENWORKS` and run:
+
+```sh
+node --import tsx --test --test-force-exit --test-timeout=30000 \
+  --test-name-pattern="native Steam SDK round trip" test/native-steam.test.ts
+```
+
+`--test-force-exit` releases the SDK's process-lifetime handles after the test.
 
 Local integration tools can use `POST /api/auth/signin` with
 `{"email":"USERNAME_OR_EMAIL","password":"..."}`. Send the returned token in
@@ -407,8 +515,8 @@ try {
 `ServerKernel` is available without HTTP through
 `await ServerKernel.create(createConfig(options))`; close it with `await kernel.close()`.
 Database initialization is asynchronous for both backends. All world operations
-must run inside `read` or `mutate`; do not nest these calls. Mutations, ticks and commits are
-serialized. Publications are delivered only after a durable commit. Failed
+must run inside `read` or `mutate`; nested calls obey the transaction rules above.
+Mutations, ticks and commits are serialized. Publications follow durable commits. Failed
 operations roll back; failed durable commits stop the kernel instead of serving
 divergent state. Call `terrainChanged()` inside a mutation after changing terrain
 or room accessibility. Never mutate the exposed state outside the lock.
@@ -428,9 +536,9 @@ Snapshots preserve world state, code, memory, segments, CPU buckets, queued
 intents, credentials, scheduler metadata and history. Player JavaScript heaps
 are not serialized: restarting or importing performs a global reset. Snapshot
 files contain private player data and password hashes; protect them accordingly.
-Nested server/runtime collections are checked before a snapshot is accepted;
-imports are an administrator interface for this server's versioned format, not
-an arbitrary upstream database migration service.
+Nested server/runtime collections are checked before a snapshot is accepted.
+Snapshot import accepts this server's versioned format; use `migrate-original`
+for original LokiJS databases.
 
 ## Configuration
 
@@ -448,6 +556,15 @@ an arbitrary upstream database migration service.
 | `STEAM_KEY`                          | Steam Web API credential                        | Unconfigured                              |
 | `SERVER_PASSWORD`                    | Optional shared game-server password            | Unconfigured                              |
 | `ASSET_DIR`                          | Additional client assets                        | Unconfigured                              |
+| `STEAM_GREENWORKS`                   | Explicit native Steam SDK module path           | Disabled                                  |
+| `MODFILE`                            | Original trusted mod manifest                   | Unset                                     |
+| `DB_PATH`                            | Original LokiJS input for an empty world        | Unset                                     |
+| `CLI_HOST`, `CLI_PORT`               | Original trusted JavaScript CLI                 | Loopback; disabled until a port is set    |
+| `RUNNERS_CNT`, `RUNNER_THREADS`      | Runner processes and concurrency per runner     | In-process; 4 threads when enabled        |
+| `PROCESSORS_CNT`                     | Concurrent room processor processes             | In-process                                |
+| `SCREEPS_WORKER_RESTART_INTERVAL`    | Worker recycling interval, seconds              | `3600`; `0` disables                      |
+| `SCREEPS_LOG_DIRECTORY`              | Worker log directory                            | Unset; output goes to the terminal        |
+| `SCREEPS_LOG_ROTATE_KEEP`            | Rotated files retained per worker               | `5`                                       |
 
 Persisted worlds retain their scheduler state. The CLI applies explicitly
 requested pause/tick-duration overrides on start; programmatic hosting restores
@@ -456,9 +573,13 @@ settings and a clock callback for controlled integration scenarios.
 
 Maintenance includes room activation, invader raids, power banks, deposits,
 strongholds and expansion, NPC market orders, market history, transaction
-retention and power-creep deletion. Notification delivery is an embedding
-callback (`deliverNotifications`); without a configured sink, notifications
-remain in a persisted operator-visible outbox rather than being discarded.
+retention and power-creep deletion. A separate one-second wall-clock scheduler
+runs due jobs even while ticks are paused. Jobs and ticks share the mutation lock.
+Notification delivery uses `deliverNotifications` or original
+`sendUserNotifications` mod listeners, outside that lock. Batches are durably
+queued, acknowledged after success and retried after failure. Delivery is
+at-least-once: sinks should deduplicate by batch id. Without a sink, batches remain
+in the persisted operator-visible outbox.
 
 ## Compatibility and security boundaries
 
@@ -475,9 +596,13 @@ world generation and maintenance, real admin HTTP requests, SockJS transports,
 client-style Lodash diff application, image pixels, durable restart and rejected
 mutations/imports. A real-server smoke exercised login, code upload, spawn
 placement, bot harvesting, console, live room updates, history, images and
-restart persistence. Live Valve ticket verification and an interactive Steam
-client session require operator credentials and are not established by these
-checks.
+restart persistence. Original-mod smoke checks additionally exercised custom
+HTTP/socket channels, TCP CLI methods, renderer metadata, custom intents over
+multiple ticks, worker storage IPC and runner replacement. The shipped 121-room
+original world was imported, ticked and reopened without its input file changing.
+Live SDK verification and native HTTP login were exercised with a fresh Steam
+ticket; paused wall-clock notification delivery was also exercised. These checks
+do not establish an interactive official-client session or live Web API validation.
 
 Use a TLS reverse proxy for remote access, restrict the admin endpoint, and
 contain the Node process when running hostile players. V8 isolate limits are

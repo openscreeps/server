@@ -237,21 +237,31 @@ export class GameService {
   addObjectIntent(request: ApiRequest) {
     const user = requireUser(request, this.context);
     const { body } = request;
-    addObjectIntent(this.context, user._id, {
-      room: stringParam(body['room']),
-      targetId: stringParam(body['_id']),
-      name: stringParam(body['name']),
-      intent: body['intent'],
-    });
+    addObjectIntent(
+      this.context,
+      user._id,
+      {
+        room: stringParam(body['room']),
+        targetId: stringParam(body['_id']),
+        name: stringParam(body['name']),
+        intent: body['intent'],
+      },
+      this.context.mods?.backend.customIntentTypes,
+    );
     return {};
   }
 
   addGlobalIntent(request: ApiRequest) {
     const user = requireUser(request, this.context);
-    addGlobalIntent(this.context.state, user._id, {
-      name: stringParam(request.body['name']),
-      intent: request.body['intent'],
-    });
+    addGlobalIntent(
+      this.context.state,
+      user._id,
+      {
+        name: stringParam(request.body['name']),
+        intent: request.body['intent'],
+      },
+      this.context.mods?.backend.customIntentTypes,
+    );
     return {};
   }
 

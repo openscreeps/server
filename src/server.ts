@@ -1,6 +1,12 @@
 import 'reflect-metadata';
-import { Inject, Module, type DynamicModule, type OnModuleDestroy } from '@nestjs/common';
-import { APP_FILTER, NestFactory } from '@nestjs/core';
+import {
+  Inject,
+  Module,
+  type DynamicModule,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from '@nestjs/common';
+import { APP_FILTER, HttpAdapterHost, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded, type NextFunction, type Request, type Response } from 'express';
 import { Server as HttpServer } from 'node:http';
@@ -39,15 +45,42 @@ import { MarketService } from './services/market.ts';
 import { PowerService } from './services/power.ts';
 import { LeaderboardService } from './services/leaderboard.ts';
 import { SteamNewsService } from './services/steam-news.ts';
+import { SteamAuthService } from './services/native-steam.ts';
 import { AdminService } from './services/admin.service.ts';
 import { HostService } from './services/host.service.ts';
 import { RealtimeService } from './services/realtime.service.ts';
+import { startOriginalCli, type OriginalCliServer } from './compatibility/original-cli.ts';
 
 @Module({})
-export class OpenScreepsModule implements OnModuleDestroy {
-  constructor(@Inject(ServerKernel) readonly kernel: ServerKernel) {}
+export class OpenScreepsModule implements OnModuleDestroy, OnModuleInit {
+  #cli: OriginalCliServer | undefined;
+
+  constructor(
+    @Inject(ServerKernel) readonly kernel: ServerKernel,
+    @Inject(HttpAdapterHost) readonly adapter: HttpAdapterHost,
+  ) {}
+
+  onModuleInit(): void {
+    const application: unknown = this.adapter.httpAdapter.getInstance();
+    this.kernel.mods.backend.emit('expressPostConfig', application);
+  }
+
+  async startCli(): Promise<AddressInfo | undefined> {
+    const { config, mods } = this.kernel;
+    if (config.cliPort === undefined) return undefined;
+    this.#cli = await startOriginalCli(this.kernel, {
+      port: config.cliPort,
+      ...(config.cliHost === undefined ? {} : { host: config.cliHost }),
+      cli: mods.cli,
+      storage: mods.storage,
+      bots: mods.common.bots,
+      version: '0.0.0',
+    });
+    return this.#cli.address;
+  }
 
   async onModuleDestroy(): Promise<void> {
+    await this.#cli?.close();
     // Drain outstanding mutations before TypeORM destroys the database connection.
     await this.kernel.close();
   }
@@ -102,6 +135,7 @@ export class OpenScreepsModule implements OnModuleDestroy {
         SteamNewsService,
         AdminService,
         HostService,
+        SteamAuthService,
         RealtimeService,
       ],
       exports: [ServerKernel, SERVER_CONTEXT],
@@ -118,6 +152,7 @@ export interface RunningServer extends AsyncDisposable {
   readonly kernel: ServerKernel;
   readonly context: ApiContext;
   readonly address: AddressInfo;
+  readonly cliAddress?: AddressInfo;
   close(): Promise<void>;
 }
 
@@ -134,6 +169,9 @@ export async function createServer(options: ServerOptions = {}): Promise<Running
       }),
       { bodyParser: false, logger: false, abortOnError: false },
     );
+    const kernel = app.get(ServerKernel);
+    const expressApplication: unknown = app.getHttpAdapter().getInstance();
+    kernel.mods.backend.emit('expressPreConfig', expressApplication);
     app.enableCors({
       origin: true,
       exposedHeaders: ['X-Token'],
@@ -162,6 +200,20 @@ export async function createServer(options: ServerOptions = {}): Promise<Running
     );
     app.use(json({ limit: '8mb' }));
     app.use(urlencoded({ limit: '8mb', extended: true }));
+    app.use(
+      '/api',
+      (request: Request, response: Response, next: NextFunction) => {
+        if (
+          config.serverPassword &&
+          !secretsEqual(request.get('X-Server-Password') ?? '', config.serverPassword)
+        ) {
+          response.json({ error: 'incorrect server password' });
+          return;
+        }
+        next();
+      },
+      kernel.mods.backend.router,
+    );
     await app.init();
     const rawServer: unknown = app.getHttpServer();
     if (!(rawServer instanceof HttpServer))
@@ -170,13 +222,20 @@ export async function createServer(options: ServerOptions = {}): Promise<Running
     await app.listen(config.port, config.host);
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Expected a TCP listen address');
-    const kernel = app.get(ServerKernel);
+    const cliAddress = await app.get(OpenScreepsModule).startCli();
     const context = app.get<ApiContext>(SERVER_CONTEXT);
     kernel.start();
     let closing: Promise<void> | undefined;
     const application = app;
     const close = (): Promise<void> => (closing ??= application.close());
-    return { kernel, context, address, close, [Symbol.asyncDispose]: close };
+    return {
+      kernel,
+      context,
+      address,
+      ...(cliAddress === undefined ? {} : { cliAddress }),
+      close,
+      [Symbol.asyncDispose]: close,
+    };
   } catch (error) {
     await app?.close();
     throw error;
