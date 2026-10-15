@@ -88,8 +88,9 @@ async function startFixture(
   config: Partial<ServerConfig> = {},
   options: OriginalCliOptions | ((kernel: ServerKernel) => OriginalCliOptions) = {},
 ): Promise<Fixture> {
+  // W1N1..E0S0: W1N1 is the controller room of a centred 3-room world
   const kernel = await ServerKernel.create(
-    createConfig({ database: ':memory:', worldSize: 2, paused: true, ...config }),
+    createConfig({ database: ':memory:', worldSize: 3, paused: true, ...config }),
   );
   const logs: string[] = [];
   let server: OriginalCliServer;
@@ -375,19 +376,19 @@ void it(
       const session = await fixture.open();
 
       assert.equal(
-        await session.run("map.generateRoom('E0N0', {sources: 1, mineral: false})", /\r\n$/),
+        await session.run("map.generateRoom('E1N0', {sources: 1, mineral: false})", /\r\n$/),
         "< 'OK'\r\n",
       );
-      assert.equal(kernel.state.world.rooms.E0N0?.status, 'normal');
-      assert.ok((await stat(join(assets, 'map', 'E0N0.png'))).isFile());
-      assert.equal(await session.run("map.closeRoom('E0N0')", /\r\n$/), '< { modified: 1 }\r\n');
-      assert.equal(kernel.state.world.rooms.E0N0.status, 'out of borders');
-      assert.equal(await session.run("map.closeRoom('E0N0')", /\r\n$/), '< {}\r\n');
-      assert.equal(await session.run("map.openRoom('E0N0')", /\r\n$/), '< { modified: 1 }\r\n');
-      assert.equal(kernel.state.world.rooms.E0N0.status, 'normal');
-      assert.equal(await session.run("map.removeRoom('E0N0')", /\r\n$/), "< 'OK'\r\n");
-      assert.equal(Object.hasOwn(kernel.state.world.rooms, 'E0N0'), false);
-      await assert.rejects(stat(join(assets, 'map', 'E0N0.png')), { code: 'ENOENT' });
+      assert.equal(kernel.state.world.rooms.E1N0?.status, 'normal');
+      assert.ok((await stat(join(assets, 'map', 'E1N0.png'))).isFile());
+      assert.equal(await session.run("map.closeRoom('E1N0')", /\r\n$/), '< { modified: 1 }\r\n');
+      assert.equal(kernel.state.world.rooms.E1N0.status, 'out of borders');
+      assert.equal(await session.run("map.closeRoom('E1N0')", /\r\n$/), '< {}\r\n');
+      assert.equal(await session.run("map.openRoom('E1N0')", /\r\n$/), '< { modified: 1 }\r\n');
+      assert.equal(kernel.state.world.rooms.E1N0.status, 'normal');
+      assert.equal(await session.run("map.removeRoom('E1N0')", /\r\n$/), "< 'OK'\r\n");
+      assert.equal(Object.hasOwn(kernel.state.world.rooms, 'E1N0'), false);
+      await assert.rejects(stat(join(assets, 'map', 'E1N0.png')), { code: 'ENOENT' });
 
       const room = Object.values(kernel.state.world.roomObjects).find(
         (object) => object.type === 'controller' && !object.user,

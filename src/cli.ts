@@ -131,7 +131,7 @@ const SERVER_OPTIONS = {
   'world-size': {
     type: 'string',
     value: 'N',
-    help: 'Rooms per side of a new world (SCREEPS_WORLD_SIZE; default 21)',
+    help: 'Rooms per side of a new world, centred on the W0|E0 and N0|S0 lines like screeps.com: 21 is W10N10..E9S9, 22 W10N10..E10S10 (SCREEPS_WORLD_SIZE; default 21)',
   },
   seed: { type: 'string', value: 'N', help: 'Seed of a new world (SCREEPS_SEED; default 1)' },
   shard: { type: 'string', value: 'NAME', help: 'Shard name (SHARD_NAME; default shard0)' },

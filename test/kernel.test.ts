@@ -90,8 +90,9 @@ void it('delivers maintenance notifications to account addresses outside the gam
 });
 
 void it('preserves a committed terrain invalidation across a later rejected mutation', async () => {
+  // W1N1 is the controller room of a centred 3-room world (W1N1..E0S0)
   const kernel = await ServerKernel.create(
-    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    createConfig({ database: ':memory:', worldSize: 3, paused: true }),
   );
   try {
     const room = Object.values(kernel.state.world.roomObjects).find(

@@ -28,7 +28,8 @@ async function withWorld(
   const directory = mkdtempSync(join(tmpdir(), 'original-storage-'));
   const config = createConfig({
     database: join(directory, 'world.sqlite'),
-    worldSize: 2,
+    // W1N1..E0S0: W1N1 is the controller room of a centred 3-room world
+    worldSize: 3,
     paused: true,
   });
   let kernel = await ServerKernel.create(config);
