@@ -46,6 +46,11 @@ export class RegistrationController {
   setUsername(@ApiInput() request: ApiRequest) {
     return this.service.setUsername(request);
   }
+
+  @ApiOperation('registerSubmit', { write: true })
+  register(@ApiInput() request: ApiRequest) {
+    return this.service.register(request);
+  }
 }
 
 @Controller()

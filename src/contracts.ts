@@ -65,6 +65,8 @@ export interface ServerConfig {
   seed: number;
   shardName: string;
   serverPassword?: string;
+  /** Open `POST /api/register/submit` sign-ups; always refused while a server password is set. */
+  allowRegistration: boolean;
   adminToken?: string;
   steamKey?: string;
   /** Explicit opt-in Greenworks module path for original native Steam encrypted-ticket login. */

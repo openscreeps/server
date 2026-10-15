@@ -142,6 +142,19 @@ void describe('HTTP contract conformance', () => {
       await anonymous.leaderboardList({ query: { mode: 'world' } });
       await anonymous.registerCheckEmail({ query: { email: 'free@example.com' } });
       await anonymous.registerCheckUsername({ query: { username: 'FreeName' } });
+      await anonymous.registerSubmit({
+        body: {
+          username: 'Registered',
+          email: 'registered@example.com',
+          password: PASSWORD,
+          modules: { main: 'module.exports.loop = function () {};' },
+        },
+      });
+      const duplicate = await anonymous.send('registerSubmit', {
+        body: { username: 'registered', email: 'other@example.com', password: PASSWORD },
+      });
+      assert.deepEqual(duplicate.body, { error: 'username already exists' });
+      await anonymous.authSignin({ body: { email: 'registered@example.com', password: PASSWORD } });
 
       // --- administration ---------------------------------------------------------------
       assert.equal((await admin.adminStatus({})).paused, true);

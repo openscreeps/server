@@ -907,6 +907,21 @@ export type RegisterSetUsernameResult = SchemaOperations["registerSetUsername"][
 export type RegisterSetUsernameSuccess = Exclude<RegisterSetUsernameResult, ErrorEnvelope>;
 
 /**
+ * Register a new account
+ */
+export interface RegisterSubmitRequest {
+  path?: never;
+  query?: never;
+  headers?: NonNullable<SchemaOperations["registerSubmit"]['parameters']["header"]>;
+  body: NonNullable<SchemaOperations["registerSubmit"]['requestBody']>['content']["application/json"];
+}
+export type RegisterSubmitResponses = 
+  | { status: 200; contentType: string; body: SchemaOperations["registerSubmit"]['responses'][200]['content']["application/json"] }
+  | { status: 429; contentType: string; body: SchemaOperations["registerSubmit"]['responses'][429]['content']["application/json"] };
+export type RegisterSubmitResult = SchemaOperations["registerSubmit"]['responses'][200]['content']["application/json"];
+export type RegisterSubmitSuccess = Exclude<RegisterSubmitResult, ErrorEnvelope>;
+
+/**
  * Read Screeps Steam announcement feed
  */
 export interface PlatformSteamNewsRequest {
@@ -2022,6 +2037,14 @@ export interface Operations {
     responses: RegisterSetUsernameResponses;
     result: RegisterSetUsernameResult;
     success: RegisterSetUsernameSuccess;
+  };
+  registerSubmit: {
+    method: "post";
+    path: "/api/register/submit";
+    request: RegisterSubmitRequest;
+    responses: RegisterSubmitResponses;
+    result: RegisterSubmitResult;
+    success: RegisterSubmitSuccess;
   };
   platformSteamNews: {
     method: "get";
@@ -4542,6 +4565,34 @@ export const operations = {
       ]
     ]
   },
+  registerSubmit: {
+    "operationId": "registerSubmit",
+    "method": "POST",
+    "path": "/api/register/submit",
+    "parameters": [
+      {
+        "name": "X-Server-Password",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      }
+    ],
+    "requestBody": {
+      "required": true,
+      "contentType": "application/json",
+      "kind": "json"
+    },
+    "responses": {
+      "200": {
+        "application/json": "json"
+      },
+      "429": {
+        "application/json": "json"
+      }
+    },
+    "security": []
+  },
   platformSteamNews: {
     "operationId": "platformSteamNews",
     "method": "GET",
@@ -6587,6 +6638,10 @@ export interface OperationHandlers<Context = void> {
    */
   registerSetUsername(request: RegisterSetUsernameRequest, context: Context): RegisterSetUsernameResult | Promise<RegisterSetUsernameResult>;
   /**
+   * Register a new account
+   */
+  registerSubmit(request: RegisterSubmitRequest, context: Context): RegisterSubmitResult | Promise<RegisterSubmitResult>;
+  /**
    * Read Screeps Steam announcement feed
    */
   platformSteamNews(request: PlatformSteamNewsRequest, context: Context): PlatformSteamNewsResult | Promise<PlatformSteamNewsResult>;
@@ -7355,6 +7410,19 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
    */
   registerSetUsername(input: RegisterSetUsernameRequest, init?: RequestOptions): Promise<RegisterSetUsernameSuccess> {
     return this.call("registerSetUsername", input, init);
+  }
+
+  /**
+   * Register a new account
+   *
+   * Creates an account with username, e-mail and password from the official web client's registration form, together with its reCAPTCHA response, tutorial completion flag and the code edited before registration (`modules`, `branches`). On success the client shows the e-mail confirmation page.
+   *
+   * Standalone: Follows the community screepsmod-auth registration: success is exactly `{ok: 1}` and issues no token (sign in with `POST /api/auth/signin`); logical errors use the HTTP 200 `{error}` envelope. Usernames must match `^[a-zA-Z0-9_-]{3,}$`, must not be the reserved system user name and are unique case-insensitively (`invalid username`, `username already exists`). E-mail addresses must match the server e-mail rule and are stored lower-cased, unique case-insensitively (`invalid email`, `email already exists`). Passwords must be 8-1024 characters (`password must be 8-1024 characters long`) and are stored as scrypt hashes. `modules` (default `{main: ''}`) is normalized like `POST /api/user/code` (`code length exceeds 5 MB limit`, `invalid params`) and stored as the `default` branch, active in world and simulation. While a server password is set every call is refused with `Registration is automatically disabled. A server password has been set.` (requests without the password first get `incorrect server password`); when the operator disables registration it answers `Registration is disabled.`.
+   *
+   * `POST /api/register/submit`
+   */
+  registerSubmit(input: RegisterSubmitRequest, init?: RequestOptions): Promise<RegisterSubmitSuccess> {
+    return this.call("registerSubmit", input, init);
   }
 
   /**

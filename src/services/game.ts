@@ -172,6 +172,7 @@ function mapStatsRoom(entry: Readonly<Record<string, unknown>>, statName: string
 type InvaderCreep = ApiOperationResult<'gameCreateInvader'>;
 type InvaderBodyPart = NonNullable<InvaderCreep['body']>[number];
 type BodyPart = NonNullable<RoomObject['body']>[number];
+type WireRoomObject = ApiOperationResult<'gameRoomObjects'>['objects'][number];
 
 /** NPC Invader user id and lifetime of a summoned invader. */
 const INVADER_USER = '2';
@@ -202,12 +203,18 @@ function invaderBodyPart({ type, hits, boost }: BodyPart): InvaderBodyPart {
 
 /** The creep document `createInvader` inserted, asserted to be a summoned NPC invader creep. */
 function invaderCreep(creep: RoomObject): InvaderCreep {
-  const { _id, type, room, x, y, user, body, hits, hitsMax, ticksToLive } = creep;
+  const { _id, type, room, x, y, user, name, body, hits, hitsMax, fatigue, store, ticksToLive } =
+    creep;
   if (
     type !== 'creep' ||
     user !== INVADER_USER ||
     ticksToLive !== INVADER_TICKS_TO_LIVE ||
-    body === undefined
+    body === undefined ||
+    name === undefined ||
+    hits === undefined ||
+    hitsMax === undefined ||
+    fatigue === undefined ||
+    store === undefined
   ) {
     throw new Error(`createInvader produced a non-invader object ${_id}`);
   }
@@ -222,10 +229,10 @@ function invaderCreep(creep: RoomObject): InvaderCreep {
     x,
     y,
     room,
-    fatigue: creep.fatigue,
-    store: creep.store,
+    fatigue,
+    store,
     storeCapacity: creep.storeCapacity ?? undefined,
-    name: creep.name,
+    name,
     userSummoned: creep.userSummoned,
   };
 }
@@ -324,7 +331,13 @@ export class GameService {
       objects.push(structuredClone(object));
       if (typeof object.user === 'string') owners.add(object.user);
     }
-    return { objects, users: structuredClone(publicUsers(world, owners)) };
+    // World documents carry an open `type: string`; the contract's `GameRoomObject` union keys
+    // undescribed types by a generated placeholder, so the wire shape is asserted here and
+    // validated against the union by the HTTP conformance test.
+    return {
+      objects: objects as unknown as WireRoomObject[],
+      users: structuredClone(publicUsers(world, owners)),
+    };
   }
 
   /** screeps.com `GET /api/game/find-object`: one room object document by id, any room. */

@@ -318,6 +318,37 @@ export class AccountsService {
     return {};
   }
 
+  /**
+   * Password registration as on community private servers (screepsmod-auth `register/submit`): no
+   * reCAPTCHA and no e-mail confirmation, so the account can sign in immediately. `recaptcha`,
+   * `tutorialDone` and `branches` are ignored; `modules` becomes the `default` branch code.
+   */
+  register(request: ApiRequest) {
+    const { config } = this.context;
+    if (config.serverPassword) {
+      throw new ApiError('Registration is automatically disabled. A server password has been set.');
+    }
+    if (!config.allowRegistration) throw new ApiError('Registration is disabled.');
+    const { username, email, password, modules } = request.body;
+    if (typeof username !== 'string') throw new ApiError('invalid username');
+    if (typeof email !== 'string') throw new ApiError('invalid email');
+    if (
+      modules !== undefined &&
+      modules !== null &&
+      JSON.stringify(modules).length > MAX_CODE_SIZE
+    ) {
+      throw new ApiError('code length exceeds 5 MB limit');
+    }
+    createUser(this.context, {
+      username,
+      email,
+      // A missing password fails the shared length rule rather than creating an account without one.
+      password: typeof password === 'string' ? password : '',
+      ...(modules === undefined || modules === null ? {} : { modules: normalizeModules(modules) }),
+    });
+    return {};
+  }
+
   // --- /api/user: world ---------------------------------------------------------------------
   worldStartRoom(request: ApiRequest) {
     const user = requireUser(request, this.context);

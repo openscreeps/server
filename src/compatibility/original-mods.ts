@@ -56,7 +56,7 @@ export class OriginalBackendConfig extends EventEmitter {
   readonly router: ExpressRouter = Router();
   customObjectTypes: Record<string, unknown> = {};
   customIntentTypes: NonNullable<BotRuntimeOptions['customIntentTypes']> = {};
-  renderer: { resources: Record<string, unknown>; metadata: Record<string, unknown> } = {
+  renderer: { resources: Record<string, string>; metadata: Record<string, unknown> } = {
     resources: {},
     metadata: {},
   };

@@ -155,6 +155,10 @@ const SERVER_OPTIONS = {
     value: 'PASSWORD',
     help: 'Password game clients must send (SERVER_PASSWORD)',
   },
+  'allow-registration': {
+    type: 'boolean',
+    help: 'Allow sign-ups through POST /api/register/submit; --no-allow-registration disables them (SCREEPS_ALLOW_REGISTRATION; default true; always off with a server password)',
+  },
   'admin-token': {
     type: 'string',
     value: 'TOKEN',
@@ -368,6 +372,8 @@ function serverOverrides(input: Invocation): Partial<ServerConfig> {
   if (steamKey !== undefined) overrides.steamKey = steamKey;
   const serverPassword = stringOption(input, 'server-password');
   if (serverPassword !== undefined) overrides.serverPassword = serverPassword;
+  const allowRegistration = booleanOption(input, 'allow-registration');
+  if (allowRegistration !== undefined) overrides.allowRegistration = allowRegistration;
   const adminToken = stringOption(input, 'admin-token');
   if (adminToken !== undefined) overrides.adminToken = adminToken;
   return overrides;

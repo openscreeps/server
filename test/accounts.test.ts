@@ -11,7 +11,7 @@ import { ApiTestClient, type ApiCallOptions } from './api-harness.ts';
 import { createAuthService } from '../src/api/auth.ts';
 import { isRecord } from '../src/api/guards.ts';
 import { createUser } from '../src/api/users.ts';
-import { createConfig } from '../src/config.ts';
+import { configFromEnvironment, createConfig } from '../src/config.ts';
 import {
   ApiError,
   RawResponse,
@@ -364,6 +364,161 @@ void describe('steam ticket authentication', () => {
     await rejects(
       h.call('GET', '/api/register/check-email', { query: { email: 's@EXAMPLE.com' } }),
       'exists',
+    );
+  });
+});
+
+void describe('password registration', () => {
+  const PASSWORD = 'correct horse';
+
+  void it('creates an account that can sign in immediately', async () => {
+    const h = harness();
+    assert.deepEqual(
+      await h.call('POST', '/api/register/submit', {
+        body: {
+          username: 'NewPlayer',
+          email: 'New.Player@Example.com',
+          password: PASSWORD,
+          recaptcha: 'ignored',
+          tutorialDone: true,
+          branches: [{ branch: 'tutorial', modules: { main: 'ignored' } }],
+        },
+      }),
+      {},
+    );
+    for (const login of ['newplayer', 'NEW.PLAYER@example.com']) {
+      const { token } = (await h.call('POST', '/api/auth/signin', {
+        body: { email: login, password: PASSWORD },
+      })) as { token: string };
+      const me = (await h.call('GET', '/api/auth/me', { token })) as Record<string, unknown>;
+      assert.equal(me.username, 'NewPlayer');
+      assert.equal(me.email, 'new.player@example.com');
+      assert.equal(me.password, true);
+      assert.equal(me.cpu, 100);
+    }
+    const userId = Object.keys(h.context.state.world.users)[0];
+    assert.ok(userId);
+    // `branches` is ignored: only the default branch exists, with the default empty code.
+    assert.deepEqual(
+      Object.values(h.context.state.branches).map(({ user, branch, modules }) => ({
+        user,
+        branch,
+        modules,
+      })),
+      [{ user: userId, branch: 'default', modules: { main: '' } }],
+    );
+  });
+
+  void it('stores modules as the default branch code', async () => {
+    const h = harness();
+    await h.call('POST', '/api/register/submit', {
+      body: {
+        username: 'Coder',
+        email: 'coder@example.com',
+        password: PASSWORD,
+        modules: { main: 'module.exports.loop = () => {};', util: 'exports.x = 1;', $bad: 'x' },
+      },
+    });
+    const user = Object.values(h.context.state.world.users)[0];
+    assert.ok(user);
+    const branch = Object.values(h.context.state.branches).find(
+      (entry) => entry.user === user._id && entry.branch === 'default',
+    );
+    assert.ok(branch?.activeWorld && branch.activeSim);
+    assert.deepEqual(branch.modules, {
+      main: 'module.exports.loop = () => {};',
+      util: 'exports.x = 1;',
+    });
+    await rejects(
+      h.call('POST', '/api/register/submit', {
+        body: {
+          username: 'BadCode',
+          email: 'bad@example.com',
+          password: PASSWORD,
+          modules: { main: 1 },
+        },
+      }),
+      'invalid params',
+    );
+    assert.equal(Object.keys(h.context.state.world.users).length, 1);
+  });
+
+  void it('rejects taken usernames and e-mail addresses case-insensitively', async () => {
+    const h = harness();
+    await h.call('POST', '/api/register/submit', {
+      body: { username: 'Taken', email: 'taken@example.com', password: PASSWORD },
+    });
+    await rejects(
+      h.call('POST', '/api/register/submit', {
+        body: { username: 'tAKEN', email: 'other@example.com', password: PASSWORD },
+      }),
+      'username already exists',
+    );
+    await rejects(
+      h.call('POST', '/api/register/submit', {
+        body: { username: 'Other', email: 'TAKEN@Example.COM', password: PASSWORD },
+      }),
+      'email already exists',
+    );
+    assert.equal(Object.keys(h.context.state.world.users).length, 1);
+  });
+
+  void it('rejects invalid usernames, e-mail addresses and passwords', async () => {
+    const h = harness();
+    const valid = { username: 'Valid', email: 'valid@example.com', password: PASSWORD };
+    for (const [body, message] of [
+      [{ ...valid, username: 'ab' }, 'invalid username'],
+      [{ ...valid, username: 'bad name' }, 'invalid username'],
+      [{ email: valid.email, password: PASSWORD }, 'invalid username'],
+      [{ ...valid, email: 'not-an-email' }, 'invalid email'],
+      [{ username: valid.username, password: PASSWORD }, 'invalid email'],
+      [{ username: valid.username, email: valid.email }, 'password must be 8-1024 characters long'],
+      [{ ...valid, password: 'short' }, 'password must be 8-1024 characters long'],
+    ] as const) {
+      await rejects(h.call('POST', '/api/register/submit', { body }), message);
+    }
+    assert.equal(Object.keys(h.context.state.world.users).length, 0);
+  });
+
+  void it('is refused while a server password is set', async () => {
+    const h = harness({ config: { serverPassword: 'server secret' } });
+    const body = { username: 'Guest', email: 'guest@example.com', password: PASSWORD };
+    await rejects(h.call('POST', '/api/register/submit', { body }), 'incorrect server password');
+    await rejects(
+      h.call('POST', '/api/register/submit', { body, serverPassword: 'server secret' }),
+      'Registration is automatically disabled. A server password has been set.',
+    );
+    assert.equal(Object.keys(h.context.state.world.users).length, 0);
+  });
+
+  void it('is refused when the operator disables it', async () => {
+    const h = harness({ config: { allowRegistration: false } });
+    await rejects(
+      h.call('POST', '/api/register/submit', {
+        body: { username: 'Guest', email: 'guest@example.com', password: PASSWORD },
+      }),
+      'Registration is disabled.',
+    );
+    assert.equal(Object.keys(h.context.state.world.users).length, 0);
+  });
+
+  void it('is enabled by default and configurable through SCREEPS_ALLOW_REGISTRATION', () => {
+    assert.equal(createConfig().allowRegistration, true);
+    for (const [value, expected] of [
+      ['false', false],
+      ['0', false],
+      ['true', true],
+      ['1', true],
+    ] as const) {
+      assert.equal(
+        createConfig(configFromEnvironment({ SCREEPS_ALLOW_REGISTRATION: value }))
+          .allowRegistration,
+        expected,
+      );
+    }
+    assert.throws(
+      () => configFromEnvironment({ SCREEPS_ALLOW_REGISTRATION: 'no' }),
+      /SCREEPS_ALLOW_REGISTRATION must be true, false, 1, or 0/,
     );
   });
 });

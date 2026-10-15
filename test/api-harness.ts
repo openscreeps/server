@@ -32,6 +32,7 @@ export interface ApiCallOptions {
   body?: Record<string, unknown>;
   query?: Record<string, string>;
   token?: string;
+  serverPassword?: string;
 }
 
 @Module({})
@@ -99,6 +100,7 @@ function send(
   const headers: Record<string, string> = {};
   if (payload !== undefined) headers['Content-Type'] = 'application/json';
   if (options.token !== undefined) headers['X-Token'] = options.token;
+  if (options.serverPassword !== undefined) headers['X-Server-Password'] = options.serverPassword;
   const { promise, resolve, reject } = Promise.withResolvers<HttpReply>();
   const outgoing = httpRequest(
     { host: '127.0.0.1', port, method, path: query ? `${path}?${query}` : path, headers },

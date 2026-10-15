@@ -11,6 +11,7 @@ export function createConfig(options: Partial<ServerConfig> = {}): ServerConfig 
     worldSize: 21,
     seed: 1,
     shardName: 'shard0',
+    allowRegistration: true,
     welcomeText: '<h4>OpenScreeps</h4><p>A standalone Screeps world.</p>',
     historyChunkSize: 20,
     historyTicks: 1000,
@@ -149,11 +150,16 @@ export function configFromEnvironment(
     const value = environment[name];
     if (value !== undefined) config[key] = Number(value);
   }
-  if (environment.SCREEPS_PAUSED !== undefined) {
-    if (!['true', 'false', '1', '0'].includes(environment.SCREEPS_PAUSED)) {
-      throw new Error('SCREEPS_PAUSED must be true, false, 1, or 0');
+  for (const [name, key] of Object.entries({
+    SCREEPS_PAUSED: 'paused',
+    SCREEPS_ALLOW_REGISTRATION: 'allowRegistration',
+  } as const)) {
+    const value = environment[name];
+    if (value === undefined) continue;
+    if (!['true', 'false', '1', '0'].includes(value)) {
+      throw new Error(`${name} must be true, false, 1, or 0`);
     }
-    config.paused = ['true', '1'].includes(environment.SCREEPS_PAUSED);
+    config[key] = ['true', '1'].includes(value);
   }
   return config;
 }
