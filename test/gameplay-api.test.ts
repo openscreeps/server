@@ -644,6 +644,28 @@ void describe('statistics, market and leaderboard', () => {
     assert.deepEqual(Object.keys(mapStats['users'] as object), ['bob']);
   });
 
+  void it('flags power-enabled rooms in map stats and sends no decorations', async () => {
+    const { state, context } = harness();
+    const controller = state.world.roomObjects['c2'];
+    assert.ok(controller);
+    controller.isPowerEnabled = true;
+    const disabled = state.world.roomObjects['c1'];
+    assert.ok(disabled);
+    disabled.isPowerEnabled = false;
+    const mapStats = await call(context, 'POST', '/api/game/map-stats', {
+      user: 'alice',
+      body: { rooms: ['W1N1', 'W2N1', 'W3N1'], statName: 'owner0' },
+    });
+    const stats = mapStats['stats'] as Record<string, Record<string, unknown>>;
+    assert.equal(stats['W2N1']?.['isPowerEnabled'], true);
+    assert.ok(!Object.hasOwn(stats['W1N1'] ?? {}, 'isPowerEnabled'));
+    assert.ok(!Object.hasOwn(stats['W3N1'] ?? {}, 'isPowerEnabled'));
+    for (const room of Object.values(stats)) {
+      assert.ok(!Object.hasOwn(room, 'decorations'));
+    }
+    assert.ok(!Object.hasOwn(mapStats, 'decorations'));
+  });
+
   void it('returns public order owners and converted prices without changing ownership filters', async () => {
     const { state, context } = harness();
     state.world.marketOrders['o1'] = {

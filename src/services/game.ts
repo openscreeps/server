@@ -113,6 +113,7 @@ interface MapStatsRoom {
     | readonly MapStatEntry[]
     | undefined;
   status?: string;
+  isPowerEnabled?: true;
   novice?: number | null;
   respawnArea?: number | null;
   openTime?: number | null;
@@ -261,6 +262,14 @@ export class GameService {
     const roomStats: Record<string, MapStatsRoom> = {};
     for (const [room, entry] of Object.entries(stats)) {
       roomStats[room] = mapStatsRoom(entry, statName);
+    }
+    // screeps.com flags rooms whose controller has power enabled (`PWR_ENABLE_ROOM`); the game's
+    // upstream `mapStats` does not. This server has no decoration inventory: no `decorations`.
+    for (const object of Object.values(world.roomObjects)) {
+      const room = roomStats[object.room];
+      if (room && object.type === 'controller' && object.isPowerEnabled === true) {
+        room.isPowerEnabled = true;
+      }
     }
     return { gameTime, stats: roomStats, statsMax, users: publicUsers(world, userIds) };
   }

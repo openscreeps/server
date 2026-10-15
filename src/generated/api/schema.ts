@@ -369,7 +369,7 @@ export interface paths {
         put?: never;
         /**
          * Get map statistics for rooms
-         * @description Returns, for each requested room that exists, its status fields, controller ownership (`own`), sign, active safe mode, mineral (`minerals0`) and, for `<stat><interval>` stat names, the ranking of that statistic over the interval, plus the largest ranked value per stat (`statsMax`) and public profiles of every referenced user. Read-only. The official world map requests `owner0` below the closest zoom level and the selected layer stat (e.g. `energyHarvested8`) at the closest one, merges `stats` and `users` into its map state and sizes stat circles by `statsMax`.
+         * @description Returns, for each requested room that exists, its status fields, controller ownership (`own`), sign, active safe mode, mineral (`minerals0`) and, for `<stat><interval>` stat names, the ranking of that statistic over the interval, plus the largest ranked value per stat (`statsMax`) and public profiles of every referenced user. screeps.com also returns, per room, `isPowerEnabled` for power-enabled controllers and the activated `decorations`, whose definitions come in the top-level `decorations`. Read-only. The official world map requests `owner0` below the closest zoom level and the selected layer stat (e.g. `energyHarvested8`) at the closest one, merges `stats` and `users` into its map state, sizes stat circles by `statsMax` and draws the room decorations.
          *
          *     Standalone: `rooms` must be an array and `statName` a string ending in digits (`invalid params` otherwise). Rankings are computed from per-minute statistics as arrays of `{user, value}` sorted descending; only users that still exist are counted. Non-string room names and rooms without a room document are ignored; `own.user` is omitted for an invader core without a user.
          */
@@ -3216,6 +3216,44 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description A decoration activated in the room (screeps.com decoration inventory). `decoration` names its definition in the response's top-level `decorations`; the official world map reads `_id`, `activatedAt`, `decoration` and `active`. */
+        GameMapStatsDecoration: {
+            _id?: string;
+            user?: components["schemas"]["UserId"];
+            /** @description Id of the decoration definition, a key of the response's `decorations`. */
+            decoration: string;
+            /** @description Values of the active decoration; `null` when inactive. */
+            active?: components["schemas"]["UserDecorationActivation"] | null;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            activatedAt?: string;
+            /** Format: date-time */
+            deactivatedAt?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Definition of a decoration referenced by the rooms of a map-stats response. The official world map reads `type`, `graphics`, `tiling`, `foregroundUrl` and `floorForegroundUrl`. */
+        GameMapStatsDecorationDefinition: {
+            _id?: string;
+            type?: string;
+            description?: string;
+            graphics?: {
+                [key: string]: unknown;
+            }[];
+            tiling?: number;
+            foregroundUrl?: string;
+            floorForegroundUrl?: string;
+            rarityMultiplier?: number;
+            /** @description Configurable properties keyed by name: `type`, `label`, `default`, `readonly` and, for ranges, `min`, `max` and `step`. */
+            props?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        } & {
+            [key: string]: unknown;
+        };
         GameMapStatsRequest: {
             /** @description Room names. The official world map sends the rooms of the visible sectors. */
             rooms: string[];
@@ -3241,12 +3279,20 @@ export interface components {
             statsMax?: {
                 [key: string]: number;
             };
+            /** @description Definitions of the decorations the rooms reference, keyed by decoration id (screeps.com). */
+            decorations?: {
+                [key: string]: components["schemas"]["GameMapStatsDecorationDefinition"];
+            };
             users: components["schemas"]["GamePublicUsers"];
         } & {
             [key: string]: unknown;
         });
-        /** @description Per-room map stats. Room-status fields are copied from the room document; `own`, `sign`, `safeMode` and `minerals0` come from room objects; the requested `statName` key (e.g. `energyHarvested8`) holds the ranking for that stat as an array of `{user, value}` sorted by value descending. */
+        /** @description Per-room map stats. Room-status fields are copied from the room document; `own`, `sign`, `safeMode`, `isPowerEnabled` and `minerals0` come from room objects (no `decorations`: standalone servers have no decoration inventory); the requested `statName` key (e.g. `energyHarvested8`) holds the ranking for that stat as an array of `{user, value}` sorted by value descending. */
         GameMapStatsRoom: {
+            /** @description `true` when the room's controller has power enabled (screeps.com); absent otherwise. */
+            isPowerEnabled?: boolean;
+            /** @description Decorations activated in the room (screeps.com); the official world map draws them. */
+            decorations?: components["schemas"]["GameMapStatsDecoration"][];
             status?: string;
             novice?: number | null;
             respawnArea?: number | null;
