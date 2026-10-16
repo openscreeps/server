@@ -253,6 +253,42 @@ void describe('administration over HTTP', () => {
     await admin('bot', 'remove', 'SimpleBot');
   });
 
+  void it('creates two-way portal pairs whose portals lead exactly back', async () => {
+    const unstableDate = 1_800_000_000_000;
+    await admin(
+      'portal',
+      'create',
+      'W0N1',
+      'E0N1',
+      '--unstable-date',
+      String(unstableDate),
+      '--decay-time',
+      '100',
+    );
+    const portals = Object.values(server.kernel.state.world.roomObjects).filter(
+      (object) => object.type === 'portal',
+    );
+    for (const [from, to] of [
+      ['W0N1', 'E0N1'],
+      ['E0N1', 'W0N1'],
+    ] as const) {
+      const cluster = portals.filter((portal) => portal.room === from);
+      assert.equal(cluster.length, 8, from);
+      for (const portal of cluster) {
+        assert.equal(portal.unstableDate, unstableDate);
+        assert.equal(portal.decayTime, 100);
+        const destination = portal.destination;
+        assert.equal(destination?.room, to);
+        const partner = portals.find(
+          (object) =>
+            object.room === to && object.x === destination.x && object.y === destination.y,
+        );
+        assert.deepEqual(partner?.destination, { room: from, x: portal.x, y: portal.y });
+      }
+    }
+    await assert.rejects(admin('portal', 'create', 'W0N1', 'W9N9'), /HTTP 4\d\d/);
+  });
+
   void it('keeps room lifecycle state aligned with the game contract', async () => {
     const room = 'W50N50';
     const userId = await server.kernel.mutate(() => {

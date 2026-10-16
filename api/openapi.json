@@ -8673,7 +8673,7 @@
               "to"
             ],
             "additionalProperties": false,
-            "description": "Create a paired portal between rooms."
+            "description": "Create a two-way portal pair between rooms, like screeps.com's: eight portals around an indestructible wall in each room, each leading to the matching portal tile of the other room (which leads back). `options` applies to every portal of both rooms."
           },
           {
             "type": "object",

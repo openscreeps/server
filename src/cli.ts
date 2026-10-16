@@ -908,7 +908,7 @@ const COMMANDS = new Map<string, Command>([
     'portal create',
     remote(
       'FROM TO',
-      'Create a portal pair between two rooms',
+      'Create a two-way portal pair between two rooms',
       [2, 2],
       (input) =>
         compact({
