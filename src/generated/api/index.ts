@@ -7893,7 +7893,7 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
    *
    * Reports protocol and server capabilities. The official web client fetches it without credentials to configure itself (history chunk size, renderer resources, feature menu). Official responses carry `features` with optional `menuData` and `shards`; the client falls back to the market and auth features when `serverData.features` is absent.
    *
-   * Standalone: Standalone servers serve one world: `serverData.shards` and official hosted `features` (seasons, decorations, inventory) may be absent, in which case the official client falls back to its market/auth feature set.
+   * Standalone: Standalone servers serve one world. `serverData.features` and `serverData.shards` may be absent (stock backend-local and OpenScreeps send neither), in which case the official client falls back to its market/auth feature set. With screepsmod-admin-utils, `/api/version` lists the features mods register (screepsmod-auth, screepsmod-admin-utils, screepsmod-mongo: their package version string, or no version) and `shards` holds the `shardName` setting, `[null]` until one is set. That name is only what `Game.shard.name` reports: socket channels, room history and requests carry no shard on a standalone server whatever it lists, because the official client qualifies them only when `options.official` is true and reads `shards` only to decide whether to show shard names (`_.some`, so `[null]` counts as none).
    *
    * `GET /api/version`
    */

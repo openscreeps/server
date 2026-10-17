@@ -5610,9 +5610,16 @@ paths:
         back to the market and auth features when `serverData.features` is absent.
 
 
-        Standalone: Standalone servers serve one world: `serverData.shards` and official hosted
-        `features` (seasons, decorations, inventory) may be absent, in which case the official
-        client falls back to its market/auth feature set.
+        Standalone: Standalone servers serve one world. `serverData.features` and
+        `serverData.shards` may be absent (stock backend-local and OpenScreeps send neither), in
+        which case the official client falls back to its market/auth feature set. With
+        screepsmod-admin-utils, `/api/version` lists the features mods register (screepsmod-auth,
+        screepsmod-admin-utils, screepsmod-mongo: their package version string, or no version) and
+        `shards` holds the `shardName` setting, `[null]` until one is set. That name is only what
+        `Game.shard.name` reports: socket channels, room history and requests carry no shard on a
+        standalone server whatever it lists, because the official client qualifies them only when
+        `options.official` is true and reads `shards` only to decide whether to show shard names
+        (`_.some`, so `[null]` counts as none).
       tags:
         - Platform
       security: []
@@ -5636,10 +5643,21 @@ paths:
         - https://github.com/screepers/node-screeps-api/blob/0f861874ff119b7ba37d0d1a4beb90f096209f4e/src/http/base.ts#L103-L151
         - https://screeps.com/a/build.min.js?bust=1787842760865#L1C180790
         - https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/services/host.service.ts#L15-L31
+        - https://github.com/screeps/backend-local/blob/9d079282303ec04e577ac2bb97f64312b25e4ccd/lib/game/server.js#L46-L72
+        - https://github.com/screepsmods/screepsmod-admin-utils/blob/2dad36835ad501ba8edac624269d315556d1a6e1/lib/backend.js#L9-L13
+        - https://github.com/screepsmods/screepsmod-admin-utils/blob/2dad36835ad501ba8edac624269d315556d1a6e1/lib/backend.js#L45-L69
+        - https://github.com/screepsmods/screepsmod-auth/blob/9195e87424475139d749df6d8063df677c4f9917/lib/menu.js#L8-L28
+        - https://github.com/screepsmods/screepsmod-mongo/blob/e3bd4bb93748d44d684f5f255e1ec24c46285302/lib/backend/index.js#L3-L7
+        - https://screeps.com/a/build.min.js?bust=1787842760865#L1C5918
+        - https://screeps.com/a/build.min.js?bust=1787842760865#L1C320915
       x-profile:
-        status: required
+        status: adapted
+        reason: "Community private servers (screeps/backend-local with screepsmod-admin-utils) publish the
+          features their mods register and a configured shard name, which the official schema does
+          not allow (override: PlatformVersion)."
         overriddenComponents:
           - "#/components/parameters/ServerPassword"
+          - "#/components/schemas/PlatformVersion"
   /api/xsolla/active-promotion:
     get:
       operationId: platformActivePromotion
@@ -13926,7 +13944,12 @@ components:
                   name:
                     type: string
                   version:
-                    type: number
+                    anyOf:
+                      - type: number
+                      - type: string
+                    description: "Feature version: a number for server features, the mod's package version string (for
+                      example `2.10.1`) for mod features, absent for some mod features
+                      (screepsmod-auth `auth-tokens`)."
                   menuData:
                     type: array
                     items:
@@ -13990,12 +14013,17 @@ components:
                       additionalProperties: true
                 required:
                   - name
-                  - version
                 additionalProperties: true
             shards:
               type: array
               items:
-                type: string
+                type:
+                  - string
+                  - "null"
+              description: "Shard names. A standalone server lists at most the `shardName` setting of
+                screepsmod-admin-utils, `null` until one is set, which is only what
+                `Game.shard.name` reports: its socket channels, room history and requests carry no
+                shard."
           required:
             - customObjectTypes
             - historyChunkSize
@@ -14007,6 +14035,9 @@ components:
         - users
         - serverData
       additionalProperties: true
+      x-profile-reason: "screepsmod-admin-utils replaces `/api/version` and publishes
+        `config.backend.features` and its `shardName` setting: mod features carry their package
+        version string or no version, and the shard list holds `null` until a name is set."
     PowerCreep:
       type: object
       description: "Power creep account record (`users.power_creeps`). While spawned, `/list` merges the

@@ -1817,7 +1817,7 @@ export interface paths {
          * Read server capabilities
          * @description Reports protocol and server capabilities. The official web client fetches it without credentials to configure itself (history chunk size, renderer resources, feature menu). Official responses carry `features` with optional `menuData` and `shards`; the client falls back to the market and auth features when `serverData.features` is absent.
          *
-         *     Standalone: Standalone servers serve one world: `serverData.shards` and official hosted `features` (seasons, decorations, inventory) may be absent, in which case the official client falls back to its market/auth feature set.
+         *     Standalone: Standalone servers serve one world. `serverData.features` and `serverData.shards` may be absent (stock backend-local and OpenScreeps send neither), in which case the official client falls back to its market/auth feature set. With screepsmod-admin-utils, `/api/version` lists the features mods register (screepsmod-auth, screepsmod-admin-utils, screepsmod-mongo: their package version string, or no version) and `shards` holds the `shardName` setting, `[null]` until one is set. That name is only what `Game.shard.name` reports: socket channels, room history and requests carry no shard on a standalone server whatever it lists, because the official client qualifies them only when `options.official` is true and reads `shards` only to decide whether to show shard names (`_.some`, so `[null]` counts as none).
          */
         get: operations["platformVersion"];
         put?: never;
@@ -5671,7 +5671,8 @@ export interface components {
                 };
                 features?: ({
                     name: string;
-                    version: number;
+                    /** @description Feature version: a number for server features, the mod's package version string (for example `2.10.1`) for mod features, absent for some mod features (screepsmod-auth `auth-tokens`). */
+                    version?: number | string;
                     menuData?: ({
                         section: number;
                         start?: number;
@@ -5714,7 +5715,8 @@ export interface components {
                 } & {
                     [key: string]: unknown;
                 })[];
-                shards?: string[];
+                /** @description Shard names. A standalone server lists at most the `shardName` setting of screepsmod-admin-utils, `null` until one is set, which is only what `Game.shard.name` reports: its socket channels, room history and requests carry no shard. */
+                shards?: (string | null)[];
             } & {
                 [key: string]: unknown;
             };
