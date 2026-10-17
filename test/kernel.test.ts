@@ -17,6 +17,7 @@ import {
   MAINTENANCE_INTERVAL,
   ServerKernel,
 } from '../src/services/server-kernel.service.ts';
+import { StateStore } from '../src/services/state-store.service.ts';
 
 const CLOCK = 1_700_000_000_000;
 
@@ -42,6 +43,17 @@ function notifiedUser(kernel: ServerKernel, username: string): Promise<User> {
     };
     return user;
   });
+}
+
+/** A paused world on a store the test observes, flushed once so it starts clean. */
+async function flushedKernel(
+  options: Parameters<typeof createConfig>[0],
+): Promise<{ kernel: ServerKernel; store: StateStore }> {
+  const config = createConfig({ database: ':memory:', worldSize: 2, paused: true, ...options });
+  const store = await StateStore.open(config);
+  const kernel = await ServerKernel.create(config, {}, store);
+  await kernel.flush();
+  return { kernel, store };
 }
 
 void it('delivers maintenance notifications to account addresses outside the game state', async () => {
@@ -319,6 +331,110 @@ void it('rolls back only a failing maintenance job and keeps its schedule', asyn
     assert.deepEqual(messages, []);
     assert.match(errors[0]?.message ?? '', /Maintenance job failed: broken/);
     assert.deepEqual((await kernel.maintain()).ran, []);
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('restores room history recorded by a failing maintenance job', async () => {
+  const frame = (time: number) => ({ time, objects: {} });
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    {
+      now: () => CLOCK,
+      cronjobs: (context) => ({
+        broken: {
+          interval: 60,
+          run: () => {
+            context.state.history.W1N1?.push(frame(2));
+            context.state.history.W2N2 = [frame(2)];
+            throw new Error('boom');
+          },
+        },
+        after: {
+          interval: 60,
+          run: () => {
+            context.state.history.W1N1?.push(frame(3));
+          },
+        },
+      }),
+    },
+  );
+  try {
+    await kernel.mutate(() => {
+      kernel.state.history.W1N1 = [frame(1)];
+    });
+    const report = await kernel.maintain();
+    assert.deepEqual(
+      report.errors.map(({ job }) => job),
+      ['broken'],
+    );
+    assert.deepEqual(kernel.state.history, { W1N1: [frame(1), frame(3)] });
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('writes the world to the store every commitTicks ticks', async () => {
+  const { kernel, store } = await flushedKernel({ commitTicks: 3 });
+  try {
+    const revision = store.revision;
+    await kernel.step();
+    await kernel.step();
+    assert.equal(store.revision, revision, 'commitTicks - 1 ticks stay in memory');
+    await kernel.step();
+    assert.equal(store.revision, revision + 1);
+    assert.equal(store.load()?.world.gameTime, kernel.state.world.gameTime);
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('flushes changes of a paused world after commitTicks tick durations', async (t) => {
+  const { kernel, store } = await flushedKernel({ commitTicks: 5, tickDuration: 100 });
+  try {
+    const revision = store.revision;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await kernel.mutate(() => {
+      kernel.state.jobs['test:write'] = 1;
+    });
+    t.mock.timers.tick(499);
+    await kernel.read(() => undefined);
+    assert.equal(store.revision, revision);
+    t.mock.timers.tick(1);
+    await kernel.read(() => undefined);
+    assert.equal(store.revision, revision + 1);
+    assert.equal(store.load()?.jobs['test:write'], 1);
+  } finally {
+    await kernel.close();
+  }
+});
+
+void it('rolls back only the failed mutation, keeping unflushed successful ones', async () => {
+  const { kernel, store } = await flushedKernel({});
+  try {
+    const revision = store.revision;
+    const time = kernel.state.world.gameTime;
+    await kernel.mutate(() => {
+      kernel.state.jobs['test:first'] = 1;
+    });
+    await kernel.step();
+    await assert.rejects(
+      kernel.mutate(() => {
+        kernel.state.jobs['test:first'] = 2;
+        kernel.state.jobs['test:second'] = 2;
+        throw new Error('rejected operation');
+      }),
+      /rejected operation/,
+    );
+    assert.equal(kernel.state.jobs['test:first'], 1);
+    assert.equal(kernel.state.jobs['test:second'], undefined);
+    assert.equal(kernel.state.world.gameTime, time + 1);
+    assert.equal(store.revision, revision, 'nothing was flushed yet');
+    await kernel.flush();
+    assert.equal(store.revision, revision + 1);
+    assert.equal(store.load()?.jobs['test:first'], 1);
+    assert.equal(store.load()?.world.gameTime, time + 1);
   } finally {
     await kernel.close();
   }

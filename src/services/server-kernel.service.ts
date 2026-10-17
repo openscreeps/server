@@ -27,7 +27,14 @@ import type {
   ServerState,
   TickEvent,
 } from '../contracts.ts';
-import { decodeState, initialServerState } from '../storage.ts';
+import {
+  copyHistory,
+  decodeState,
+  initialServerState,
+  sameHistory,
+  snapshotJson,
+  type RoomHistory,
+} from '../storage.ts';
 import { StateStore } from './state-store.service.ts';
 import { OriginalMods } from '../compatibility/original-mods.ts';
 import { importOriginalWorld } from '../compatibility/original-import.ts';
@@ -43,6 +50,8 @@ const TOKEN_SWEEP_INTERVAL = 60000;
 /** First and longest pause before a failed notification delivery is retried. */
 const DELIVERY_RETRY_MIN = 1000;
 const DELIVERY_RETRY_MAX = 60000;
+/** Longest `setTimeout` delay; longer ones fire at once. */
+const MAX_TIMER_DELAY = 0x7fffffff;
 
 /** One wall-clock maintenance job: upstream `config.cronjobs[name] = [interval, run]`. */
 export interface Cronjob {
@@ -50,7 +59,7 @@ export interface Cronjob {
   readonly interval: number;
   /**
    * Runs inside a serialized kernel mutation and is awaited; the result is ignored. Batches it
-   * appends to `state.notificationOutbox` are delivered after the commit. A throw rolls back only
+   * appends to `state.notificationOutbox` are delivered after the mutation. A throw rolls back only
    * this job's changes; its schedule still advances, so it is retried after its interval.
    */
   run(now: number): unknown;
@@ -123,9 +132,17 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+/** A world the kernel can return to: the snapshot JSON and the history's frame references. */
+interface Baseline {
+  readonly serialized: string;
+  readonly history: RoomHistory;
+}
+
 /**
  * The server's single world: a `GameSession` whose every change runs as one serialized mutation,
- * durably committed before its events are published. Ticks follow the persisted tick rate;
+ * applied in memory and published once it succeeded. The world is flushed to the store every
+ * `commitTicks` ticks, after `commitTicks` tick durations without one, on `flush()` and on close;
+ * a crash loses the changes since the last flush. Ticks follow the persisted tick rate;
  * maintenance jobs and notification delivery follow the wall clock, also while paused.
  */
 @Injectable()
@@ -155,6 +172,14 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
   #started = false;
   #fault: Error | undefined;
   #publications: Array<() => void> | undefined;
+  /** The world after the last successful mutation; a failed mutation returns to it. */
+  #baseline: Baseline;
+  /** The baseline differs from the last flushed world. */
+  #dirty = false;
+  /** Ticks applied since the last flush. */
+  #unflushedTicks = 0;
+  /** Flushes a dirty world that no tick flushed in time. */
+  #flushTimer: NodeJS.Timeout | undefined;
   #delivery: Promise<void> | undefined;
   #deliveryRetryAt = 0;
   #deliveryRetryDelay = DELIVERY_RETRY_MIN;
@@ -177,15 +202,20 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     this.runners = runners;
     this.processors = processors;
     this.#workerLogs = workerLogs;
+    this.#baseline = {
+      serialized: snapshotJson(session.state),
+      history: copyHistory(session.state.history),
+    };
     this.events.on('error', (error) => {
       console.error(error);
     });
   }
 
   /**
-   * Loads the committed world, or creates and commits a new one. Without `store` the kernel opens
-   * one from `config`. The kernel takes over the store either way: `close()` closes it, and a failed
-   * create aborts it, also destroying a borrowed data source that nothing else would release.
+   * Loads the committed world, or creates and writes a new one. Without `store` the kernel opens
+   * one from `config`. The kernel takes over the store either way: `close()` flushes the world and
+   * closes it, and a failed create aborts it, also destroying a borrowed data source that nothing
+   * else would release.
    */
   static async create(
     config: ServerConfig,
@@ -399,8 +429,9 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
   }
 
   /**
-   * Serialized, durably committed, then published; a failure rolls the world back. A call inside an
-   * active mutation joins it (committing or rolling back with it); inside a read it is rejected.
+   * Serialized, applied in memory, then published; a failure returns the world to its state after
+   * the last successful mutation. The change reaches the store with the next flush. A call inside
+   * an active mutation joins it (succeeding or rolling back with it); inside a read it is rejected.
    */
   mutate<T>(operation: () => T | Promise<T>): Promise<T> {
     const scope = this.#activeScope();
@@ -412,32 +443,47 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     return this.#enqueue(() => this.#commit(operation));
   }
 
+  /**
+   * Writes the world to the store once the queued operations ran; nothing is written when the world
+   * is unchanged since the last flush. A failed write stops the kernel, as a failed tick flush does.
+   */
+  flush(): Promise<void> {
+    if (this.#activeScope()) {
+      return Promise.reject(new Error('Cannot flush inside a kernel operation'));
+    }
+    return this.#enqueue(() => this.#flush());
+  }
+
   async #commit<T>(operation: () => T | Promise<T>): Promise<T> {
     const publications: Array<() => void> = [];
     const terrainDirtyBefore = this.#session.terrainDirty;
+    const ticksBefore = this.#unflushedTicks;
     this.#publications = publications;
     let result: T;
     try {
       result = await this.#within({ active: true, mutable: true, joined: new Set() }, operation);
     } catch (error) {
       this.#publications = undefined;
-      this.#rollback(terrainDirtyBefore);
+      this.#unflushedTicks = ticksBefore;
+      this.#restore(this.#baseline, terrainDirtyBefore);
       this.#reconcileSchedule();
       throw error;
     }
-    try {
-      this.#session.syncRuntime();
-      await this.#store.save(this.state);
-    } catch (error) {
-      this.#publications = undefined;
-      this.#fault = new Error('Durable commit failed; server stopped to prevent divergent ticks', {
-        cause: error,
-      });
-      this.#cancelTimers();
-      this.events.emit('error', this.#fault);
-      throw this.#fault;
-    }
     this.#publications = undefined;
+    let baseline: Baseline;
+    try {
+      baseline = this.#capture();
+    } catch (error) {
+      throw this.#commitFailed(error);
+    }
+    if (
+      baseline.serialized !== this.#baseline.serialized ||
+      !sameHistory(baseline.history, this.#baseline.history)
+    ) {
+      this.#dirty = true;
+    }
+    this.#baseline = baseline;
+    if (this.#dirty) this.#armFlush(this.#unflushedTicks !== ticksBefore);
     for (const publish of publications) {
       try {
         publish();
@@ -447,32 +493,81 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     }
     this.#reconcileSchedule();
     this.#kickDelivery();
+    if (this.#unflushedTicks >= this.config.commitTicks) await this.#flush();
     return result;
   }
 
-  #rollback(terrainDirtyBefore: boolean): void {
+  /** The world now, with the player runtime synced into it. */
+  #capture(): Baseline {
     this.#session.syncRuntime();
-    if (JSON.stringify(this.state) === this.#store.serialized) return;
-    const committed = this.#store.load();
-    if (!committed) throw new Error('Missing committed server state');
+    return { serialized: snapshotJson(this.state), history: copyHistory(this.state.history) };
+  }
+
+  /** Returns the world to `baseline` unless it is still there. */
+  #restore(baseline: Baseline, terrainDirty: boolean): void {
+    this.#session.syncRuntime();
+    if (
+      snapshotJson(this.state) === baseline.serialized &&
+      sameHistory(this.state.history, baseline.history)
+    ) {
+      return;
+    }
+    const state = decodeState(baseline.serialized);
+    state.history = copyHistory(baseline.history);
     // Ordinary validation failures never reset player heaps. A failed operation that changed
     // runtime data must restore that data; restoring a runtime intentionally performs a reset.
-    this.#session.adopt(committed, { runtime: 'preserve', terrainDirty: terrainDirtyBefore });
+    this.#session.adopt(state, { runtime: 'preserve', terrainDirty });
   }
 
   /** Inside a mutation: returns a function restoring the world and pending publications to now. */
   #savepoint(): () => void {
-    this.#session.syncRuntime();
-    const serialized = JSON.stringify(this.state);
+    const baseline = this.#capture();
     const terrainDirty = this.#session.terrainDirty;
     const publications = this.#publications;
     const published = publications?.length ?? 0;
     return () => {
       publications?.splice(published);
-      this.#session.syncRuntime();
-      if (JSON.stringify(this.state) === serialized) return;
-      this.#session.adopt(decodeState(serialized), { runtime: 'preserve', terrainDirty });
+      this.#restore(baseline, terrainDirty);
     };
+  }
+
+  /** Between operations: writes the world to the store unless it is unchanged since the last flush. */
+  async #flush(): Promise<void> {
+    clearTimeout(this.#flushTimer);
+    this.#flushTimer = undefined;
+    this.#unflushedTicks = 0;
+    if (!this.#dirty) return;
+    try {
+      await this.#store.save(this.state);
+    } catch (error) {
+      throw this.#commitFailed(error);
+    }
+    this.#dirty = false;
+  }
+
+  /** The world in memory can no longer reach the store: stop instead of serving divergent ticks. */
+  #commitFailed(error: unknown): Error {
+    this.#fault = new Error('Durable commit failed; server stopped to prevent divergent ticks', {
+      cause: error,
+    });
+    this.#cancelTimers();
+    this.events.emit('error', this.#fault);
+    return this.#fault;
+  }
+
+  /**
+   * Flushes a dirty world `commitTicks` tick durations from now: armed when the world becomes dirty
+   * and re-armed by every tick (`restart`), so it fires when ticks stall or are paused.
+   */
+  #armFlush(restart: boolean): void {
+    if (this.#stopping || this.#fault || (this.#flushTimer && !restart)) return;
+    clearTimeout(this.#flushTimer);
+    const delay = Math.min(this.config.commitTicks * this.state.tickDuration, MAX_TIMER_DELAY);
+    this.#flushTimer = setTimeout(() => {
+      this.#flushTimer = undefined;
+      // A failed flush already stopped the kernel and reported its fault.
+      void this.#scope.exit(() => this.#enqueue(() => this.#flush())).catch(() => undefined);
+    }, delay);
   }
 
   publish(channel: string, data: unknown): void {
@@ -494,6 +589,7 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     this.mods.engine.emit('mainLoopStage', 'start');
     try {
       const event: TickEvent = { ...(await this.#session.tick()), maintenance };
+      this.#unflushedTicks++;
       this.mods.engine.emit('mainLoopStage', 'custom');
       await this.mods.engine.mainLoopCustomStage();
       this.#publications?.push(() => {
@@ -525,14 +621,14 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     this.#schedule();
   }
 
-  /** One explicit tick, preceded by the due maintenance jobs, committed as one mutation. */
+  /** One explicit tick, preceded by the due maintenance jobs, applied as one mutation. */
   step(): Promise<TickEvent> {
     return this.mutate(async () => this.#tick(await this.#maintain(this.now())));
   }
 
   /**
    * Runs the due maintenance jobs now and reports them; the wall-clock timer calls this every
-   * second once started. Jobs that are not due are skipped without a commit.
+   * second once started. Jobs that are not due are skipped without a mutation.
    */
   async maintain(): Promise<MaintenanceReport> {
     if (!(await this.read(() => this.#maintenanceDue(this.now())))) return emptyReport();
@@ -631,6 +727,8 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     this.#timer = undefined;
     clearTimeout(this.#maintenanceTimer);
     this.#maintenanceTimer = undefined;
+    clearTimeout(this.#flushTimer);
+    this.#flushTimer = undefined;
   }
 
   /** Arms the next automatic tick; an automatic tick in flight arms its successor itself. */
@@ -701,7 +799,7 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     try {
       await this.maintain();
     } catch (error) {
-      // A failed commit already stopped the kernel and reported its fault.
+      // A failed flush already stopped the kernel and reported its fault.
       if (!this.#fault && !this.#stopping) this.events.emit('error', toError(error));
     }
     // Retries deliveries that failed earlier, once their backoff elapsed.
@@ -772,15 +870,16 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     } catch (error) {
       this.#deliveryRetryAt = this.now() + this.#deliveryRetryDelay;
       this.#deliveryRetryDelay = Math.min(this.#deliveryRetryDelay * 2, DELIVERY_RETRY_MAX);
-      // A failed commit already stopped the kernel and reported its fault.
+      // A failed flush already stopped the kernel and reported its fault.
       if (!this.#fault) this.events.emit('error', toError(error));
     }
   }
 
   /**
    * Stops the timers, lets a running maintenance pass commit and a running delivery acknowledge its
-   * batch, drains queued work, then closes the store (ending the writer lease). Undelivered batches
-   * stay in the persisted outbox. Idempotent.
+   * batch, drains queued work, flushes the world, then closes the store (ending the writer lease).
+   * Undelivered batches stay in the persisted outbox. Rejects when the final flush failed, after
+   * releasing everything. Idempotent.
    */
   close(): Promise<void> {
     this.#closure ??= this.#shutdown();
@@ -795,6 +894,15 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     await this.#delivery;
     this.#closing = true;
     await this.#queue;
+    let failure: Error | undefined;
+    // A kernel stopped by a failed write keeps the store at its last flush.
+    if (!this.#fault) {
+      try {
+        await this.#flush();
+      } catch (error) {
+        failure = toError(error);
+      }
+    }
     this.#session.dispose();
     await Promise.all([this.runners?.close(), this.processors?.close()]);
     this.mods.close();
@@ -804,6 +912,7 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
     } finally {
       this.events.removeAllListeners();
     }
+    if (failure) throw failure;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

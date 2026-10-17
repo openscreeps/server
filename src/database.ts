@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import type { DataSourceOptions } from 'typeorm';
 import type { ServerConfig } from './contracts.ts';
+import { RoomHistoryFrame } from './entities/room-history-frame.entity.ts';
 import { WorldSnapshot } from './entities/world-snapshot.entity.ts';
 import { ServerSnapshot1791417600000 } from './migrations/1791417600000-server-snapshot.ts';
 
@@ -25,7 +26,7 @@ function lockSqlite(database: Database.Database): void {
 /** TypeORM options shared by the Nest-managed and the headless (CLI) data source. */
 export function dataSourceOptions(config: ServerConfig): DataSourceOptions {
   const shared = {
-    entities: [WorldSnapshot],
+    entities: [WorldSnapshot, RoomHistoryFrame],
     migrations: [ServerSnapshot1791417600000],
     migrationsTableName: 'server_migrations',
     // StateStore migrates only after it holds the writer lease; never synchronize from entities.

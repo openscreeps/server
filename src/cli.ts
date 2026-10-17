@@ -140,6 +140,11 @@ const SERVER_OPTIONS = {
     value: 'MS',
     help: 'Minimum milliseconds per tick (SCREEPS_TICK_DURATION; default 1000)',
   },
+  'commit-ticks': {
+    type: 'string',
+    value: 'N',
+    help: 'Ticks between writes of the world to the database (SCREEPS_COMMIT_TICKS; default 10)',
+  },
   paused: {
     type: 'boolean',
     help: 'Pause ticks; --no-paused resumes (SCREEPS_PAUSED; default false)',
@@ -342,6 +347,7 @@ function serverOverrides(input: Invocation): Partial<ServerConfig> {
     processors: 'processorCount',
     'worker-restart-interval': 'workerRestartInterval',
     'log-rotate-keep': 'logRotateKeep',
+    'commit-ticks': 'commitTicks',
   } as const)) {
     const value = integerOption(input, option);
     if (value !== undefined) overrides[key] = value;

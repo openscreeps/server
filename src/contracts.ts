@@ -90,6 +90,11 @@ export interface ServerConfig {
   welcomeText: string;
   historyChunkSize: number;
   historyTicks: number;
+  /**
+   * Ticks between flushes of the world to the database; a dirty world without ticks is flushed
+   * after this many tick durations. A crash loses the changes since the last flush.
+   */
+  commitTicks: number;
   socketUpdateThrottle: number;
   tokenLifetimeMs: number;
   /** Optional delivery callback; absent means retained operator-visible outbox, never lost mail. */
@@ -109,7 +114,10 @@ export interface ServerContext extends GameContext<ServerState> {
   readonly mods?: OriginalMods;
   /** Serialize reads with ticks; nested reads join an active transaction. */
   read<T>(operation: () => T | Promise<T>): Promise<T>;
-  /** Serialize and durably commit; nested writes join a mutation and are rejected inside a read. */
+  /**
+   * Serialize and apply in memory, rolling back on failure; the change is stored with the next
+   * flush. Nested writes join a mutation and are rejected inside a read.
+   */
   mutate<T>(operation: () => T | Promise<T>): Promise<T>;
   publish(channel: string, data: unknown): void;
   /** Call after changing room terrain inside a mutation; refreshes pathfinding before next tick. */

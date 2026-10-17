@@ -15,6 +15,7 @@ export function createConfig(options: Partial<ServerConfig> = {}): ServerConfig 
     welcomeText: '<h4>OpenScreeps</h4><p>A standalone Screeps world.</p>',
     historyChunkSize: 20,
     historyTicks: 1000,
+    commitTicks: 10,
     socketUpdateThrottle: 200,
     tokenLifetimeMs: 60 * 1000,
     ...options,
@@ -26,6 +27,7 @@ export function createConfig(options: Partial<ServerConfig> = {}): ServerConfig 
     ['seed', 0, 0xffffffff],
     ['historyChunkSize', 1, 1000],
     ['historyTicks', 0, 100000],
+    ['commitTicks', 1, 100000],
     ['socketUpdateThrottle', 0, 60000],
     ['tokenLifetimeMs', 1000, 365 * 24 * 60 * 60 * 1000],
   ] as const) {
@@ -126,6 +128,7 @@ export function configFromEnvironment(
       | 'worldSize'
       | 'seed'
       | 'historyTicks'
+      | 'commitTicks'
       | 'cliPort'
       | 'runnerCount'
       | 'runnerThreads'
@@ -139,6 +142,7 @@ export function configFromEnvironment(
     SCREEPS_WORLD_SIZE: 'worldSize',
     SCREEPS_SEED: 'seed',
     SCREEPS_HISTORY_TICKS: 'historyTicks',
+    SCREEPS_COMMIT_TICKS: 'commitTicks',
     CLI_PORT: 'cliPort',
     RUNNERS_CNT: 'runnerCount',
     RUNNER_THREADS: 'runnerThreads',

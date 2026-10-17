@@ -57,11 +57,25 @@ The server imports game APIs only. ESLint rejects direct engine imports in both
 server source and tests; engine build-script approval covers the transitive dependency.
 
 `PersistenceModule` configures Nest's TypeORM integration. `StateStore` uses the
-`WorldSnapshot` entity and repository transactions; versioned migrations adopt
-existing SQLite `server_snapshot` tables without replacing their worlds.
-Production schema synchronization is disabled. Both databases store one atomic,
-versioned world snapshot, not separate relational rows for every game object.
+`WorldSnapshot` and `RoomHistoryFrame` entities and repository transactions;
+versioned migrations adopt existing SQLite `server_snapshot` tables without
+replacing their worlds. Production schema synchronization is disabled. Both
+databases store one atomic, versioned world snapshot, not separate relational rows
+for every game object. Room history is the exception: it only grows and expires,
+so each frame is one `server_room_history` row and the snapshot holds an empty
+`history`. A flush inserts the recorded frames and deletes the expired ones in
+the same transaction as the snapshot, which is rewritten only when it changed.
 This keeps simulation, player runtime and server metadata committed together.
+
+Mutations and ticks change the world in memory; the kernel flushes it to the
+database every `commitTicks` ticks (`SCREEPS_COMMIT_TICKS`, `--commit-ticks`;
+default 10), when changes stayed pending for `commitTicks` tick durations without
+a tick (for example while paused), on `ServerKernel.flush()` and on a graceful
+close. A flush writes one consistent world between operations. A crash loses
+the changes since the last flush: up to `commitTicks` ticks, or `commitTicks`
+tick durations of API and admin changes whose events were already published.
+Notification batches queued since are lost; batches delivered since are
+delivered again. `commitTicks: 1` flushes after every tick.
 
 The SQLite driver is pinned to `better-sqlite3` 13's N-API implementation: version
 12's native statement cleanup crashes on the pinned Linux Node runtime. The scoped
@@ -172,10 +186,11 @@ The server retains an atomic transaction boundary even where original backend
 operations perform partial writes before an error. The boundary is one
 authenticated or writing HTTP API request: `ApiInterceptor` runs the controller
 inside one `ServerKernel.mutate` call, and a thrown error — including game
-errors reported as status 200 `{error}` envelopes — restores the last durably
-committed state and discards queued publications. Each world-changing admin
-action is likewise its own mutation (`tick N` commits each tick separately); the Steam ticket route
-verifies outside the lock and then commits through one mutation.
+errors reported as status 200 `{error}` envelopes — restores the state after the
+last successful operation and discards queued publications. Each world-changing
+admin action is likewise its own mutation (`tick N` applies each tick
+separately); the Steam ticket route verifies outside the lock and then applies
+its change through one mutation.
 
 In `gameplay.flags.limit` (step 6), a refused move deletes the old flag before
 reporting `flags limit exceeded` in the original and in the direct game API.
@@ -371,7 +386,7 @@ docker compose exec server node dist/cli.js --help
 The world, token file and journals persist across `docker compose restart`,
 `down`/`up` and image rebuilds (`docker compose build --pull && docker compose up -d`).
 `docker compose down -v` deletes the volumes and therefore the world. On
-SIGTERM the server closes sockets and commits the world; Compose waits up to 30
+SIGTERM the server closes sockets and flushes the world; Compose waits up to 30
 seconds before killing it. The image health check polls `/health`, and the
 service restarts unless stopped. The root filesystem is read-only, all Linux
 capabilities are dropped and privilege escalation is disabled; only `/data` and
@@ -626,8 +641,9 @@ try {
 `await ServerKernel.create(createConfig(options))`; close it with `await kernel.close()`.
 Database initialization is asynchronous for both backends. All world operations
 must run inside `read` or `mutate`; nested calls obey the transaction rules above.
-Mutations, ticks and commits are serialized. Publications follow durable commits. Failed
-operations roll back; failed durable commits stop the kernel instead of serving
+Mutations, ticks and flushes are serialized. Publications follow successful
+mutations; the world reaches the database with the next flush (`flush()` forces
+one). Failed operations roll back; failed flushes stop the kernel instead of serving
 divergent state. Call `terrainChanged()` inside a mutation after changing terrain
 or room accessibility. Never mutate the exposed state outside the lock.
 
@@ -662,6 +678,7 @@ for original LokiJS databases.
 | `SCREEPS_TICK_DURATION`              | Minimum tick interval, milliseconds             | `1000`                                    |
 | `SCREEPS_PAUSED`                     | Pause/resume override                           | `false` for a new world                   |
 | `SCREEPS_HISTORY_TICKS`              | Room-history retention                          | `1000`                                    |
+| `SCREEPS_COMMIT_TICKS`               | Ticks between database flushes                  | `10`                                      |
 | `SCREEPS_ADMIN_TOKEN`                | Admin bearer credential, at least 32 characters | Disabled unless provided or loaded by CLI |
 | `STEAM_KEY`                          | Steam Web API credential                        | Unconfigured                              |
 | `SERVER_PASSWORD`                    | Optional shared game-server password            | Unconfigured                              |
@@ -686,8 +703,8 @@ strongholds and expansion, NPC market orders, market history, transaction
 retention and power-creep deletion. A separate one-second wall-clock scheduler
 runs due jobs even while ticks are paused. Jobs and ticks share the mutation lock.
 Notification delivery uses `deliverNotifications` or original
-`sendUserNotifications` mod listeners, outside that lock. Batches are durably
-queued, acknowledged after success and retried after failure. Delivery is
+`sendUserNotifications` mod listeners, outside that lock. Batches are queued in
+the world, acknowledged after success and retried after failure. Delivery is
 at-least-once: sinks should deduplicate by batch id. Without a sink, batches remain
 in the persisted operator-visible outbox.
 
@@ -718,5 +735,6 @@ Use a TLS reverse proxy for remote access, restrict the admin endpoint, and
 contain the Node process when running hostile players. V8 isolate limits are
 not an operating-system process boundary. CPU timing depends on hardware;
 wall-clock policies and random/player timing inputs affect replay equivalence.
-TypeORM stores a complete versioned snapshot per commit: this favors atomicity
-and an inspectable single-owner server, not a claim of large-world throughput.
+TypeORM stores a complete versioned snapshot per flush, plus the room history
+frames since the last one: this favors atomicity and an inspectable single-owner
+server, not a claim of large-world throughput.

@@ -1,8 +1,9 @@
 import { Table, type MigrationInterface, type QueryRunner } from 'typeorm';
 
 /**
- * Creates the singleton world table. SQLite worlds written before TypeORM already contain this exact
- * table (`CREATE TABLE IF NOT EXISTS server_snapshot ...`), so an existing table is adopted as-is.
+ * Creates the singleton world table and the room history table. SQLite worlds written before
+ * TypeORM already contain this exact world table (`CREATE TABLE IF NOT EXISTS server_snapshot
+ * ...`), so an existing table is adopted as-is.
  */
 export class ServerSnapshot1791417600000 implements MigrationInterface {
   readonly name = 'ServerSnapshot1791417600000';
@@ -21,9 +22,21 @@ export class ServerSnapshot1791417600000 implements MigrationInterface {
       }),
       true,
     );
+    await queryRunner.createTable(
+      new Table({
+        name: 'server_room_history',
+        columns: [
+          { name: 'room', type: 'text', isPrimary: true },
+          { name: 'time', type: 'bigint', isPrimary: true },
+          { name: 'objects', type: 'text' },
+        ],
+      }),
+      true,
+    );
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.dropTable('server_room_history', true);
     await queryRunner.dropTable('server_snapshot', true);
   }
 }

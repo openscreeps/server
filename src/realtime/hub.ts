@@ -2,10 +2,10 @@
  * Socket protocol 14 sessions and subscriptions (backend `socket/server.js`, `rooms.js`,
  * `user.js`, `map.js`, `system.js`).
  *
- * Everything sent is committed state: tick results arrive through `events.tick` after the tick
- * is durably saved, other slices' `context.publish` messages after their mutation commits, and
- * every state read (room snapshots, diffs, memory, map views) runs inside `context.read`, which
- * is serialized with ticks and mutations.
+ * Everything sent is the outcome of successful operations: tick results arrive through
+ * `events.tick` after the tick succeeded, other slices' `context.publish` messages after their
+ * mutation succeeded, and every state read (room snapshots, diffs, memory, map views) runs inside
+ * `context.read`, which is serialized with ticks and mutations.
  */
 
 import type { JsonObject } from '@openscreeps/game';
