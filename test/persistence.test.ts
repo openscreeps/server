@@ -146,8 +146,15 @@ for (const backend of backends) {
         }
       }));
 
-    void it('refuses a second writer until the owner closes', () =>
+    void it('refuses a second writer until the owner closes', (t) =>
       withWorld(backend.create, async (world) => {
+        // Exercise the real exclusive lock without spending two seconds retrying a known owner.
+        // The lock, rejection, owner progress and subsequent handover remain unchanged.
+        const initialize = Reflect.get(DataSource.prototype, 'initialize');
+        t.mock.method(DataSource.prototype, 'initialize', function (this: DataSource) {
+          if (this.options.type === 'better-sqlite3') this.setOptions({ timeout: 0 });
+          return initialize.call(this);
+        });
         const owner = await ServerKernel.create(world.config());
         try {
           await assert.rejects(

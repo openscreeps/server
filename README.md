@@ -24,6 +24,11 @@ Checks include the generated API contract staleness check, strict TypeScript,
 type-aware ESLint, Prettier, behavioral and HTTP contract conformance tests and
 declaration compilation.
 
+All server tests and helpers are TypeScript, checked by `npm run typecheck` and
+run directly with `tsx` by `npm test`, retaining Node's process-isolated parallel
+runner. Database ownership tests use real SQLite locks with a test-scoped zero
+busy timeout instead of waiting for retries; production lock timeouts are unchanged.
+
 SQLite tests run by default. Set `SCREEPS_TEST_DATABASE_URL` to a dedicated PostgreSQL
 test database to run both backends; PostgreSQL cases create and remove isolated schemas.
 The test role needs permission to create schemas. CI also has a PostgreSQL service job.
