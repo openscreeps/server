@@ -7,6 +7,28 @@ import { ServerKernel } from './server-kernel.service.ts';
 import { SteamAuthService } from './native-steam.ts';
 import type { OperationResult } from '../api/operations.ts';
 
+/**
+ * `serverData.features` of `GET /api/version`. The official client uses `market` and `auth`
+ * (its MARKET_FEATURE and AUTH_FEATURE) whenever a server lists no features, so listing them
+ * keeps its behaviour; `openscreeps` identifies this server to clients (version 1 of the
+ * marker).
+ */
+const FEATURES = [
+  {
+    name: 'market',
+    version: 1,
+    menuData: [
+      {
+        section: 0,
+        after: 'World',
+        item: { label: 'Market', routerLink: '/market', svg: 'market' },
+      },
+    ],
+  },
+  { name: 'auth', version: 1 },
+  { name: 'openscreeps', version: 1 },
+];
+
 @Injectable()
 export class HostService {
   constructor(
@@ -30,6 +52,7 @@ export class HostService {
         historyChunkSize: this.kernel.mods.backend.historyChunkSize,
         socketUpdateThrottle: this.kernel.mods.backend.socketUpdateThrottle,
         renderer: this.kernel.mods.backend.renderer,
+        features: FEATURES,
       },
     };
   }

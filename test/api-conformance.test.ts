@@ -131,7 +131,13 @@ void describe('HTTP contract conformance', () => {
 
       // --- public platform and world information ----------------------------------------
       assert.match(await anonymous.platformRoot({}), /OpenScreeps/);
-      assert.equal((await anonymous.platformVersion({})).protocol, 14);
+      const version = await anonymous.platformVersion({});
+      assert.equal(version.protocol, 14);
+      // Clients identify an OpenScreeps server by this feature.
+      assert.deepEqual(
+        version.serverData.features?.find((feature) => feature.name === 'openscreeps'),
+        { name: 'openscreeps', version: 1 },
+      );
       assert.equal((await anonymous.platformHealth({})).paused, true);
       await anonymous.gameTime({});
       await anonymous.gameTick({});
