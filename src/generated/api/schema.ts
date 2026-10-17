@@ -1131,7 +1131,7 @@ export interface paths {
         };
         /**
          * List code branches
-         * @description Lists the player's code branches with their world/simulator activation flags. If no branch named `default` exists, an empty inactive `default` branch is created first (so this GET may write). The official web client passes `withCode` (true when it needs module contents, e.g. to sync local files) and reads `list`.
+         * @description Lists the player's code branches with their world/simulator activation flags. If no branch named `default` exists, an empty inactive `default` branch is created first (so this GET may write). The official web client passes `withCode` (true when it needs module contents, e.g. to sync local files) and reads `list`. Without `withCode` the entries carry only `_id`, `branch`, `activeWorld` and `activeSim`; with it they also carry `user`, `modules` and `timestamp`.
          *
          *     Standalone: Ignores `withCode` and always returns complete branch documents including `user`, `modules` and `timestamp` (Unix milliseconds, absent until code is first saved).
          */
@@ -1337,7 +1337,7 @@ export interface paths {
          * Write Memory
          * @description Assigns `value` at `path`, deletes the value at `path` when `value` is omitted, or (without `path`) clears Memory and merges an object `value` into it. The edit is not applied synchronously: it is queued as a hidden console command executed inside the player's runtime on the given shard. Commands are queued and run only when the player's runtime reaches its console-processing step (after a main loop run); no ordering relative to other queued commands, ticks or code deployment is guaranteed by this API, and the response does not contain the evaluation result (results arrive on the console realtime channel). JSON-serialized values over 1 MiB yield `memory size is too large`.
          *
-         *     Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path` and, at execution, fails the hidden command when an intermediate path element is not an object. Returns only `{ok: 1}`.
+         *     Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path`. At execution, an assignment creates missing intermediate objects and fails the hidden command when an intermediate path element is a primitive or `null`; deleting below a missing element does nothing. Returns only `{ok: 1}`.
          */
         post: operations["userMemorySet"];
         delete?: never;
@@ -1355,7 +1355,7 @@ export interface paths {
         };
         /**
          * Read a RawMemory segment
-         * @description Returns the contents of a `RawMemory.segments` entry (0-99), or `null` when it was never written. A comma-separated list of ids returns an array of contents in request order (node-screeps-api). Ids outside 0-99 yield `invalid segment ID`. The official web client reads single segments of the current shard.
+         * @description Returns the contents of a `RawMemory.segments` entry (0-99). A segment that was never written has no contents: `data` is `null`, or absent when the server's storage reads it as `undefined` (backend-local answers `{data}` as read, and its default LokiJS storage yields `undefined`, which JSON omits). A comma-separated list of ids returns an array of contents in request order (node-screeps-api). Ids outside 0-99 yield `invalid segment ID`. The official web client reads single segments of the current shard.
          *
          *     Standalone: Parses `segment` with `parseInt`, so a list reads only its first id and returns a single value.
          */
@@ -1817,7 +1817,7 @@ export interface paths {
          * Read server capabilities
          * @description Reports protocol and server capabilities. The official web client fetches it without credentials to configure itself (history chunk size, renderer resources, feature menu). Official responses carry `features` with optional `menuData` and `shards`; the client falls back to the market and auth features when `serverData.features` is absent.
          *
-         *     Standalone: Standalone servers serve one world: `serverData.shards` and official hosted `features` (seasons, decorations, inventory) may be absent, in which case the official client falls back to its market/auth feature set.
+         *     Standalone: Standalone servers serve one world. `serverData.features` is always `[market, auth, openscreeps]`: `market` (version 1, with the Market menu entry after World) and `auth` (version 1) are exactly the features the official client assumes when `features` is absent, so listing them keeps its behaviour unchanged; `{name: 'openscreeps', version: 1}` (marker version 1) identifies an OpenScreeps server, and a server without it is not OpenScreeps. `serverData.shards` is absent, so the official client shows no shard names; socket channels, room history and requests carry no shard, because the official client qualifies them only when `options.official` is true.
          */
         get: operations["platformVersion"];
         put?: never;
@@ -5647,6 +5647,10 @@ export interface components {
             useNativeAuth?: boolean;
             users: number;
             currentSeason?: string;
+            /** @description Season entry fee schedule: each key is a Unix time in seconds from which the value, a fee in access keys, applies. The official client passes it to its season access widget. */
+            seasonAccessCost?: {
+                [key: string]: number;
+            };
             decorationConvertationCost?: number;
             decorationPixelizationCost?: number;
             serverData: {
@@ -5669,9 +5673,12 @@ export interface components {
                 } & {
                     [key: string]: unknown;
                 };
-                features?: ({
+                /** @description Server features: the official client's fallback features `market` (version 1, Market menu entry after World) and `auth` (version 1), then the OpenScreeps marker `{name: 'openscreeps', version: 1}`. Clients identify an OpenScreeps server by the marker (its `version` is the marker version); a server whose features lack it is not OpenScreeps. */
+                features: ({
                     name: string;
                     version: number;
+                    /** @description HTML hint about the season entry fee schedule, shown by the official client's season access widget (the `persistent-world` feature). */
+                    seasonHint?: string;
                     menuData?: ({
                         section: number;
                         start?: number;
@@ -5916,7 +5923,7 @@ export interface components {
             activeWorld?: boolean;
             /** @description Branch runs in the simulator. Absent on branches created by cloning until activated. */
             activeSim?: boolean;
-            /** @description Last code change: Unix milliseconds or a stored date (ISO 8601 string). */
+            /** @description Last code change as stored: Unix milliseconds for a branch last saved by `POST /api/user/code`, a date (ISO 8601 string) for one last saved by `POST /api/user/clone-branch` (both observed on screeps.com). */
             timestamp?: number | string;
         };
         UserCodeGetResponse: {
@@ -6081,8 +6088,8 @@ export interface components {
              * @constant
              */
             ok: 1;
-            /** @description Segment text, or null for an uninitialized segment. screeps.com returns an array in request order when several comma-separated ids were requested. */
-            data: string | null | (string | null)[];
+            /** @description Segment text; `null` or absent for an uninitialized segment. screeps.com returns an array in request order when several comma-separated ids were requested. */
+            data?: string | null | (string | null)[];
         };
         UserMemorySegmentSetRequest: {
             /** @description Single segment id 0-99 (parsed with `parseInt`). */

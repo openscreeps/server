@@ -51,7 +51,7 @@
     "@nestjs/platform-express": "12.1.2",
     "@nestjs/typeorm": "12.0.2",
     "@openscreeps/game": "github:openscreeps/game#34041136d36fcf6327a3b1fcbf7f554b5d78234b",
-    "@openscreeps/openapi": "github:openscreeps/openapi#511be42de8e71bdc0c3e2954bf26e6be57d1ba4b",
+    "@openscreeps/openapi": "github:openscreeps/openapi#dfe1fe0dba94075c52a84d9941158aa49aee2643",
     "better-sqlite3": "13.0.3",
     "express": "5.2.1",
     "ini": "7.0.0",
@@ -71,7 +71,7 @@
     "isolated-vm@7.0.1": true,
     "github:openscreeps/game#34041136d36fcf6327a3b1fcbf7f554b5d78234b": true,
     "github:openscreeps/engine#5187cc94cda1b5a992ec6fe77f7f35cce1bef8db": true,
-    "github:openscreeps/openapi#511be42de8e71bdc0c3e2954bf26e6be57d1ba4b": true
+    "github:openscreeps/openapi#dfe1fe0dba94075c52a84d9941158aa49aee2643": true
   },
   "overrides": {
     "typeorm": {

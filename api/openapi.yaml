@@ -3388,7 +3388,9 @@ paths:
         Lists the player's code branches with their world/simulator activation flags. If no branch
         named `default` exists, an empty inactive `default` branch is created first (so this GET may
         write). The official web client passes `withCode` (true when it needs module contents, e.g.
-        to sync local files) and reads `list`.
+        to sync local files) and reads `list`. Without `withCode` the entries carry only `_id`,
+        `branch`, `activeWorld` and `activeSim`; with it they also carry `user`, `modules` and
+        `timestamp`.
 
 
         Standalone: Ignores `withCode` and always returns complete branch documents including
@@ -3432,8 +3434,6 @@ paths:
         - https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/api/accounts.ts#L94-L98
         - https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/services/accounts.ts#L282-L285
         - https://github.com/openscreeps/game/blob/fd9cde57de20a1e37a0108c46ca78314c8b9bc36/src/code.ts#L83-L89
-      x-unverified: Whether `modules` is omitted when `withCode` is not set is unverified;
-        node-screeps-api types only `_id`, `branch`, `activeWorld` and `activeSim`.
       parameters:
         - name: withCode
           in: query
@@ -4106,9 +4106,10 @@ paths:
         JSON-serialized values over 1 MiB yield `memory size is too large`.
 
 
-        Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path`
-        and, at execution, fails the hidden command when an intermediate path element is not an
-        object. Returns only `{ok: 1}`.
+        Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory
+        path`. At execution, an assignment creates missing intermediate objects and fails the hidden
+        command when an intermediate path element is a primitive or `null`; deleting below a missing
+        element does nothing. Returns only `{ok: 1}`.
       tags:
         - User Memory
       security:
@@ -4177,10 +4178,12 @@ paths:
       operationId: userMemorySegmentGet
       summary: Read a RawMemory segment
       description: >-
-        Returns the contents of a `RawMemory.segments` entry (0-99), or `null` when it was never
-        written. A comma-separated list of ids returns an array of contents in request order
-        (node-screeps-api). Ids outside 0-99 yield `invalid segment ID`. The official web client
-        reads single segments of the current shard.
+        Returns the contents of a `RawMemory.segments` entry (0-99). A segment that was never
+        written has no contents: `data` is `null`, or absent when the server's storage reads it as
+        `undefined` (backend-local answers `{data}` as read, and its default LokiJS storage yields
+        `undefined`, which JSON omits). A comma-separated list of ids returns an array of contents
+        in request order (node-screeps-api). Ids outside 0-99 yield `invalid segment ID`. The
+        official web client reads single segments of the current shard.
 
 
         Standalone: Parses `segment` with `parseInt`, so a list reads only its first id and returns
@@ -5610,9 +5613,14 @@ paths:
         back to the market and auth features when `serverData.features` is absent.
 
 
-        Standalone: Standalone servers serve one world: `serverData.shards` and official hosted
-        `features` (seasons, decorations, inventory) may be absent, in which case the official
-        client falls back to its market/auth feature set.
+        Standalone: Standalone servers serve one world. `serverData.features` is always `[market,
+        auth, openscreeps]`: `market` (version 1, with the Market menu entry after World) and `auth`
+        (version 1) are exactly the features the official client assumes when `features` is absent,
+        so listing them keeps its behaviour unchanged; `{name: 'openscreeps', version: 1}` (marker
+        version 1) identifies an OpenScreeps server, and a server without it is not OpenScreeps.
+        `serverData.shards` is absent, so the official client shows no shard names; socket channels,
+        room history and requests carry no shard, because the official client qualifies them only
+        when `options.official` is true.
       tags:
         - Platform
       security: []
@@ -5635,11 +5643,20 @@ paths:
         - https://screeps.com/a/app2/main.js?bust=1787842760865#L220605C46
         - https://github.com/screepers/node-screeps-api/blob/0f861874ff119b7ba37d0d1a4beb90f096209f4e/src/http/base.ts#L103-L151
         - https://screeps.com/a/build.min.js?bust=1787842760865#L1C180790
+        - https://screeps.com/a/app2/main.js?bust=1787842760865#L197866C4625
         - https://github.com/openscreeps/server/blob/3954fd26f107a4b508ccaf6b5f64e4aa951d9e91/src/services/host.service.ts#L15-L31
+        - https://screeps.com/a/app2/main.js?bust=1787842760865#L220545C1
+        - https://screeps.com/a/app2/main.js?bust=1787842760865#L220585C13
+        - https://screeps.com/a/build.min.js?bust=1787842760865#L1C5918
+        - https://screeps.com/a/build.min.js?bust=1787842760865#L1C320915
       x-profile:
-        status: required
+        status: adapted
+        reason: "OpenScreeps declares itself: `serverData.features` is always present and lists the official
+          client's fallback features followed by an `openscreeps` marker, so clients can tell an
+          OpenScreeps server from other private servers (override: PlatformVersion)."
         overriddenComponents:
           - "#/components/parameters/ServerPassword"
+          - "#/components/schemas/PlatformVersion"
   /api/xsolla/active-promotion:
     get:
       operationId: platformActivePromotion
@@ -13882,6 +13899,12 @@ components:
           type: integer
         currentSeason:
           type: string
+        seasonAccessCost:
+          type: object
+          description: "Season entry fee schedule: each key is a Unix time in seconds from which the value, a
+            fee in access keys, applies. The official client passes it to its season access widget."
+          additionalProperties:
+            type: integer
         decorationConvertationCost:
           type: number
         decorationPixelizationCost:
@@ -13927,6 +13950,10 @@ components:
                     type: string
                   version:
                     type: number
+                  seasonHint:
+                    type: string
+                    description: HTML hint about the season entry fee schedule, shown by the official client's season
+                      access widget (the `persistent-world` feature).
                   menuData:
                     type: array
                     items:
@@ -13992,6 +14019,21 @@ components:
                   - name
                   - version
                 additionalProperties: true
+              description: "Server features: the official client's fallback features `market` (version 1, Market
+                menu entry after World) and `auth` (version 1), then the OpenScreeps marker `{name:
+                'openscreeps', version: 1}`. Clients identify an OpenScreeps server by the marker
+                (its `version` is the marker version); a server whose features lack it is not
+                OpenScreeps."
+              contains:
+                type: object
+                properties:
+                  name:
+                    const: openscreeps
+                  version:
+                    const: 1
+                required:
+                  - name
+                  - version
             shards:
               type: array
               items:
@@ -14000,6 +14042,7 @@ components:
             - customObjectTypes
             - historyChunkSize
             - renderer
+            - features
           additionalProperties: true
       required:
         - ok
@@ -14007,6 +14050,8 @@ components:
         - users
         - serverData
       additionalProperties: true
+      x-profile-reason: OpenScreeps always lists `serverData.features`, ending with the `openscreeps`
+        marker that identifies it.
     PowerCreep:
       type: object
       description: "Power creep account record (`users.power_creeps`). While spawned, `/list` merges the
@@ -14524,7 +14569,9 @@ components:
           type: boolean
           description: Branch runs in the simulator. Absent on branches created by cloning until activated.
         timestamp:
-          description: "Last code change: Unix milliseconds or a stored date (ISO 8601 string)."
+          description: "Last code change as stored: Unix milliseconds for a branch last saved by `POST
+            /api/user/code`, a date (ISO 8601 string) for one last saved by `POST
+            /api/user/clone-branch` (both observed on screeps.com)."
           anyOf:
             - type: integer
             - type: string
@@ -14831,8 +14878,8 @@ components:
           const: 1
           description: "Success marker; every JSON success body carries `ok: 1`."
         data:
-          description: Segment text, or null for an uninitialized segment. screeps.com returns an array in
-            request order when several comma-separated ids were requested.
+          description: Segment text; `null` or absent for an uninitialized segment. screeps.com returns an
+            array in request order when several comma-separated ids were requested.
           anyOf:
             - type: string
             - type: "null"
@@ -14843,7 +14890,6 @@ components:
                   - type: "null"
       required:
         - ok
-        - data
     UserMemorySegmentSetRequest:
       type: object
       properties:
