@@ -984,8 +984,6 @@ export interface paths {
         /**
          * Check e-mail availability
          * @description Public availability check used by the official web client's registration and e-mail forms. Succeeds with `{ok: 1}` when no account uses the address; otherwise returns the error envelope `exists`. A missing/empty `email` yields `invalid email`. Addresses are compared lower-cased.
-         *
-         *     Standalone: Community servers serve this check through screepsmod-auth, which answers a taken address with `User Exists` instead of `exists` and compares addresses as stored.
          */
         get: operations["registerCheckEmail"];
         put?: never;
@@ -1006,8 +1004,6 @@ export interface paths {
         /**
          * Check username availability
          * @description Public, case-insensitive username availability check. Succeeds with `{ok: 1}` when the name is free; `exists` when taken; `invalid username` when missing/empty. It does not validate the username format (that happens in `POST /api/register/set-username`).
-         *
-         *     Standalone: Community servers serve this check through screepsmod-auth, which answers a taken name with `User Exists` instead of `exists` and compares usernames case-sensitively.
          */
         get: operations["registerCheckUsername"];
         put?: never;
@@ -1341,7 +1337,7 @@ export interface paths {
          * Write Memory
          * @description Assigns `value` at `path`, deletes the value at `path` when `value` is omitted, or (without `path`) clears Memory and merges an object `value` into it. The edit is not applied synchronously: it is queued as a hidden console command executed inside the player's runtime on the given shard. Commands are queued and run only when the player's runtime reaches its console-processing step (after a main loop run); no ordering relative to other queued commands, ticks or code deployment is guaranteed by this API, and the response does not contain the evaluation result (results arrive on the console realtime channel). JSON-serialized values over 1 MiB yield `memory size is too large`.
          *
-         *     Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path`. At execution, an assignment creates missing intermediate objects and fails the hidden command when an intermediate path element is a primitive or `null`; deleting below a missing element does nothing. The Screeps server (backend-local) instead queues `Memory['a']['b'] = value` (or `delete …`) as written: it accepts any path, and a missing intermediate element makes the hidden command throw, leaving Memory unchanged although the reply is a success. Returns only `{ok: 1}`.
+         *     Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path`. At execution, an assignment creates missing intermediate objects and fails the hidden command when an intermediate path element is a primitive or `null`; deleting below a missing element does nothing. Returns only `{ok: 1}`.
          */
         post: operations["userMemorySet"];
         delete?: never;
@@ -1359,7 +1355,7 @@ export interface paths {
         };
         /**
          * Read a RawMemory segment
-         * @description Returns the contents of a `RawMemory.segments` entry (0-99), or `null` when it was never written. A comma-separated list of ids returns an array of contents in request order (node-screeps-api). Ids outside 0-99 yield `invalid segment ID`. The official web client reads single segments of the current shard.
+         * @description Returns the contents of a `RawMemory.segments` entry (0-99). A segment that was never written has no contents: `data` is `null`, or absent when the server's storage reads it as `undefined` (backend-local answers `{data}` as read, and its default LokiJS storage yields `undefined`, which JSON omits). A comma-separated list of ids returns an array of contents in request order (node-screeps-api). Ids outside 0-99 yield `invalid segment ID`. The official web client reads single segments of the current shard.
          *
          *     Standalone: Parses `segment` with `parseInt`, so a list reads only its first id and returns a single value.
          */
@@ -1821,7 +1817,7 @@ export interface paths {
          * Read server capabilities
          * @description Reports protocol and server capabilities. The official web client fetches it without credentials to configure itself (history chunk size, renderer resources, feature menu). Official responses carry `features` with optional `menuData` and `shards`; the client falls back to the market and auth features when `serverData.features` is absent.
          *
-         *     Standalone: Standalone servers serve one world. `serverData.features` and `serverData.shards` may be absent (stock backend-local and OpenScreeps send neither), in which case the official client falls back to its market/auth feature set. With screepsmod-admin-utils, `/api/version` lists the features mods register (screepsmod-auth, screepsmod-admin-utils, screepsmod-mongo: their package version string, or no version) and `shards` holds the `shardName` setting, `[null]` until one is set. That name is only what `Game.shard.name` reports: socket channels, room history and requests carry no shard on a standalone server whatever it lists, because the official client qualifies them only when `options.official` is true and reads `shards` only to decide whether to show shard names (`_.some`, so `[null]` counts as none).
+         *     Standalone: Standalone servers serve one world. `serverData.features` is always `[market, auth, openscreeps]`: `market` (version 1, with the Market menu entry after World) and `auth` (version 1) are exactly the features the official client assumes when `features` is absent, so listing them keeps its behaviour unchanged; `{name: 'openscreeps', version: 1}` (marker version 1) identifies an OpenScreeps server, and a server without it is not OpenScreeps. `serverData.shards` is absent, so the official client shows no shard names; socket channels, room history and requests carry no shard, because the official client qualifies them only when `options.official` is true.
          */
         get: operations["platformVersion"];
         put?: never;
@@ -5307,17 +5303,12 @@ export interface components {
             [key: string]: unknown;
         };
         /** @description Every room object of the room plus the public profiles of referenced users (typed by the community client; the official client reads `objects` and `users`). */
-        GameRoomObjectsResponse: {
-            /**
-             * @description Success marker; absent when screepsmod-admin-utils serves the route.
-             * @constant
-             */
-            ok?: 1;
+        GameRoomObjectsResponse: components["schemas"]["Ok"] & ({
             objects: components["schemas"]["GameRoomObject"][];
             users: components["schemas"]["GamePublicUsers"];
         } & {
             [key: string]: unknown;
-        };
+        });
         GameRoomOverviewResponse: components["schemas"]["Ok"] & ({
             /** @description Controller owner, or `null` when the room has no owned controller. */
             owner: ({
@@ -5656,6 +5647,10 @@ export interface components {
             useNativeAuth?: boolean;
             users: number;
             currentSeason?: string;
+            /** @description Season entry fee schedule: each key is a Unix time in seconds from which the value, a fee in access keys, applies. The official client passes it to its season access widget. */
+            seasonAccessCost?: {
+                [key: string]: number;
+            };
             decorationConvertationCost?: number;
             decorationPixelizationCost?: number;
             serverData: {
@@ -5678,10 +5673,12 @@ export interface components {
                 } & {
                     [key: string]: unknown;
                 };
-                features?: ({
+                /** @description Server features: the official client's fallback features `market` (version 1, Market menu entry after World) and `auth` (version 1), then the OpenScreeps marker `{name: 'openscreeps', version: 1}`. Clients identify an OpenScreeps server by the marker (its `version` is the marker version); a server whose features lack it is not OpenScreeps. */
+                features: ({
                     name: string;
-                    /** @description Feature version: a number for server features, the mod's package version string (for example `2.10.1`) for mod features, absent for some mod features (screepsmod-auth `auth-tokens`). */
-                    version?: number | string;
+                    version: number;
+                    /** @description HTML hint about the season entry fee schedule, shown by the official client's season access widget (the `persistent-world` feature). */
+                    seasonHint?: string;
                     menuData?: ({
                         section: number;
                         start?: number;
@@ -5724,8 +5721,7 @@ export interface components {
                 } & {
                     [key: string]: unknown;
                 })[];
-                /** @description Shard names. A standalone server lists at most the `shardName` setting of screepsmod-admin-utils, `null` until one is set, which is only what `Game.shard.name` reports: its socket channels, room history and requests carry no shard. */
-                shards?: (string | null)[];
+                shards?: string[];
             } & {
                 [key: string]: unknown;
             };
@@ -6092,8 +6088,8 @@ export interface components {
              * @constant
              */
             ok: 1;
-            /** @description Segment text, or null for an uninitialized segment. screeps.com returns an array in request order when several comma-separated ids were requested. */
-            data: string | null | (string | null)[];
+            /** @description Segment text; `null` or absent for an uninitialized segment. screeps.com returns an array in request order when several comma-separated ids were requested. */
+            data?: string | null | (string | null)[];
         };
         UserMemorySegmentSetRequest: {
             /** @description Single segment id 0-99 (parsed with `parseInt`). */

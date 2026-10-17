@@ -135,7 +135,7 @@ void describe('HTTP contract conformance', () => {
       assert.equal(version.protocol, 14);
       // Clients identify an OpenScreeps server by this feature.
       assert.deepEqual(
-        version.serverData.features?.find((feature) => feature.name === 'openscreeps'),
+        version.serverData.features.find((feature) => feature.name === 'openscreeps'),
         { name: 'openscreeps', version: 1 },
       );
       assert.equal((await anonymous.platformHealth({})).paused, true);
