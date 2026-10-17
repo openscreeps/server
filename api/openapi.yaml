@@ -2267,14 +2267,18 @@ paths:
         - https://github.com/screepers/node-screeps-api/blob/0f861874ff119b7ba37d0d1a4beb90f096209f4e/src/ScreepsHttpClient.ts#L1002-L1008
         - https://github.com/screepers/node-screeps-api/blob/0f861874ff119b7ba37d0d1a4beb90f096209f4e/src/http/game.ts#L153-L156
         - https://github.com/screepers/node-screeps-api/blob/0f861874ff119b7ba37d0d1a4beb90f096209f4e/src/common/rooms.ts#L83-L90
+        - https://github.com/screepsmods/screepsmod-admin-utils/blob/2dad36835ad501ba8edac624269d315556d1a6e1/lib/backend.js#L70-L78
       x-unverified: Whether screeps.com requires authentication is not visible in source (the official
         client sends its token when it has one); object fields beyond the base fields are typed only
         by the community client.
       x-profile:
-        status: required
+        status: adapted
+        reason: "Community private servers serve the route through screepsmod-admin-utils, which answers
+          `{objects, users}` without `ok` (override: GameRoomObjectsResponse)."
         overriddenComponents:
           - "#/components/parameters/ServerPassword"
           - "#/components/parameters/Shard"
+          - "#/components/schemas/GameRoomObjectsResponse"
   /api/game/room-overview:
     get:
       operationId: gameRoomOverview
@@ -13246,9 +13250,12 @@ components:
       additionalProperties: true
     GameRoomObjectsResponse:
       allOf:
-        - $ref: "#/components/schemas/Ok"
         - type: object
           properties:
+            ok:
+              type: integer
+              const: 1
+              description: Success marker; absent when screepsmod-admin-utils serves the route.
             objects:
               type: array
               items:
@@ -13261,6 +13268,8 @@ components:
             - users
       description: Every room object of the room plus the public profiles of referenced users (typed by
         the community client; the official client reads `objects` and `users`).
+      x-profile-reason: screepsmod-admin-utils replaces `GET /api/game/room-objects` and answers
+        `{objects, users}` without the `ok` marker.
     GameRoomOverviewResponse:
       allOf:
         - $ref: "#/components/schemas/Ok"

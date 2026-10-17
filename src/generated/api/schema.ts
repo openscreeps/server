@@ -5303,12 +5303,17 @@ export interface components {
             [key: string]: unknown;
         };
         /** @description Every room object of the room plus the public profiles of referenced users (typed by the community client; the official client reads `objects` and `users`). */
-        GameRoomObjectsResponse: components["schemas"]["Ok"] & ({
+        GameRoomObjectsResponse: {
+            /**
+             * @description Success marker; absent when screepsmod-admin-utils serves the route.
+             * @constant
+             */
+            ok?: 1;
             objects: components["schemas"]["GameRoomObject"][];
             users: components["schemas"]["GamePublicUsers"];
         } & {
             [key: string]: unknown;
-        });
+        };
         GameRoomOverviewResponse: components["schemas"]["Ok"] & ({
             /** @description Controller owner, or `null` when the room has no owned controller. */
             owner: ({
