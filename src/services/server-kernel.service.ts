@@ -27,7 +27,13 @@ import type {
   ServerState,
   TickEvent,
 } from '../contracts.ts';
-import { decodeState, initialServerState } from '../storage.ts';
+import {
+  copyHistory,
+  decodeState,
+  initialServerState,
+  sameHistory,
+  snapshotJson,
+} from '../storage.ts';
 import { StateStore } from './state-store.service.ts';
 import { OriginalMods } from '../compatibility/original-mods.ts';
 import { importOriginalWorld } from '../compatibility/original-import.ts';
@@ -452,7 +458,7 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
 
   #rollback(terrainDirtyBefore: boolean): void {
     this.#session.syncRuntime();
-    if (JSON.stringify(this.state) === this.#store.serialized) return;
+    if (this.#store.isCommitted(this.state)) return;
     const committed = this.#store.load();
     if (!committed) throw new Error('Missing committed server state');
     // Ordinary validation failures never reset player heaps. A failed operation that changed
@@ -463,15 +469,21 @@ export class ServerKernel implements ServerContext, AsyncDisposable {
   /** Inside a mutation: returns a function restoring the world and pending publications to now. */
   #savepoint(): () => void {
     this.#session.syncRuntime();
-    const serialized = JSON.stringify(this.state);
+    const serialized = snapshotJson(this.state);
+    // Frames are never mutated once recorded: the savepoint keeps the history's frame references.
+    const history = copyHistory(this.state.history);
     const terrainDirty = this.#session.terrainDirty;
     const publications = this.#publications;
     const published = publications?.length ?? 0;
     return () => {
       publications?.splice(published);
       this.#session.syncRuntime();
-      if (JSON.stringify(this.state) === serialized) return;
-      this.#session.adopt(decodeState(serialized), { runtime: 'preserve', terrainDirty });
+      if (snapshotJson(this.state) === serialized && sameHistory(this.state.history, history)) {
+        return;
+      }
+      const state = decodeState(serialized);
+      state.history = copyHistory(history);
+      this.#session.adopt(state, { runtime: 'preserve', terrainDirty });
     };
   }
 

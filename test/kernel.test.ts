@@ -324,6 +324,45 @@ void it('rolls back only a failing maintenance job and keeps its schedule', asyn
   }
 });
 
+void it('restores room history recorded by a failing maintenance job', async () => {
+  const frame = (time: number) => ({ time, objects: {} });
+  const kernel = await ServerKernel.create(
+    createConfig({ database: ':memory:', worldSize: 2, paused: true }),
+    {
+      now: () => CLOCK,
+      cronjobs: (context) => ({
+        broken: {
+          interval: 60,
+          run: () => {
+            context.state.history.W1N1?.push(frame(2));
+            context.state.history.W2N2 = [frame(2)];
+            throw new Error('boom');
+          },
+        },
+        after: {
+          interval: 60,
+          run: () => {
+            context.state.history.W1N1?.push(frame(3));
+          },
+        },
+      }),
+    },
+  );
+  try {
+    await kernel.mutate(() => {
+      kernel.state.history.W1N1 = [frame(1)];
+    });
+    const report = await kernel.maintain();
+    assert.deepEqual(
+      report.errors.map(({ job }) => job),
+      ['broken'],
+    );
+    assert.deepEqual(kernel.state.history, { W1N1: [frame(1), frame(3)] });
+  } finally {
+    await kernel.close();
+  }
+});
+
 void it('delivers notifications generated outside ticks and retries failed deliveries', async () => {
   const firstAttempt: PromiseWithResolvers<void> = Promise.withResolvers();
   const delivered: NotificationBatch[] = [];

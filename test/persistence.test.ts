@@ -19,6 +19,7 @@ import { databaseLabel } from '../src/database.ts';
 import { PersistenceModule } from '../src/persistence.module.ts';
 import { ServerKernel } from '../src/services/server-kernel.service.ts';
 import { StateStore } from '../src/services/state-store.service.ts';
+import { decodeState, initialServerState } from '../src/storage.ts';
 
 /** Set to a PostgreSQL URL (any database the user may create schemas in) to test PostgreSQL. */
 const postgresUrl = process.env.SCREEPS_TEST_DATABASE_URL;
@@ -27,6 +28,8 @@ interface TestWorld {
   config(): ServerConfig;
   /** Runs SQL against the world's database as an outside client, bypassing the server. */
   execute(sql: string): Promise<void>;
+  /** Reads rows as an outside client; SQLite allows it only while no server holds the world. */
+  query(sql: string): Promise<Array<Record<string, unknown>>>;
   dispose(): Promise<void>;
 }
 
@@ -43,6 +46,14 @@ function sqliteWorld(): Promise<TestWorld> {
         connection.close();
       }
       return Promise.resolve();
+    },
+    query: (sql) => {
+      const connection = new Database(database, { timeout: 100 });
+      try {
+        return Promise.resolve(connection.prepare<[], Record<string, unknown>>(sql).all());
+      } finally {
+        connection.close();
+      }
     },
     // Fails on Windows when a test leaks an open database handle.
     dispose: () => {
@@ -74,6 +85,7 @@ async function postgresWorld(): Promise<TestWorld> {
     execute: async (sql) => {
       await client.query(sql);
     },
+    query: async (sql) => (await client.query<Record<string, unknown>>(sql)).rows,
     dispose: async () => {
       try {
         await client.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -120,13 +132,14 @@ for (const backend of backends) {
         const kernel = await ServerKernel.create(world.config());
         await kernel.step();
         await kernel.step();
-        const committed = JSON.stringify(await kernel.exportSnapshot());
+        // History rooms reload in name order, which an order-insensitive comparison ignores.
+        const committed: unknown = JSON.parse(JSON.stringify(await kernel.exportSnapshot()));
         await kernel.close();
 
         const store = await StateStore.open(world.config());
         try {
           assert.equal(store.revision, 3);
-          assert.equal(store.serialized, committed);
+          assert.deepEqual(store.load(), committed);
           const loaded = store.load();
           assert.ok(loaded);
           await store.save(loaded);
@@ -137,7 +150,7 @@ for (const backend of backends) {
 
         const reopened = await ServerKernel.create(world.config());
         try {
-          assert.equal(JSON.stringify(reopened.state), committed);
+          assert.deepEqual(JSON.parse(JSON.stringify(reopened.state)), committed);
           const time = reopened.state.world.gameTime;
           await reopened.step();
           assert.equal(reopened.state.world.gameTime, time + 1);
@@ -181,9 +194,9 @@ for (const backend of backends) {
       withWorld(backend.create, async (world) => {
         const store = await StateStore.open(world.config());
         const kernel = await ServerKernel.create(world.config(), {}, store);
-        let committed: string | undefined;
+        let committed: unknown;
         try {
-          committed = JSON.stringify(await kernel.exportSnapshot());
+          committed = JSON.parse(JSON.stringify(await kernel.exportSnapshot()));
           mock.method(store, 'save', () => Promise.reject(new Error('disk full')));
           await assert.rejects(kernel.step(), /Durable commit failed/);
           assert.equal(kernel.healthy, false);
@@ -198,7 +211,7 @@ for (const backend of backends) {
         const reopened = await StateStore.open(world.config());
         try {
           assert.equal(reopened.revision, 1);
-          assert.equal(reopened.serialized, committed);
+          assert.deepEqual(reopened.load(), committed);
         } finally {
           await reopened.close();
         }
@@ -277,7 +290,7 @@ for (const backend of backends) {
         const store = await StateStore.open(config);
         try {
           assert.equal(store.revision, 2);
-          assert.equal(store.serialized, JSON.stringify(committed));
+          assert.deepEqual(store.load(), JSON.parse(JSON.stringify(committed)));
         } finally {
           await store.close();
         }
@@ -300,6 +313,95 @@ for (const backend of backends) {
           persistenceContext(world.config()),
           /Unsupported or invalid server snapshot/,
         );
+      }));
+
+    void it('keeps room history frame by frame beside the snapshot', () =>
+      withWorld(backend.create, async (world) => {
+        const frame = (time: number, id: string) => ({
+          time,
+          objects: { [id]: { _id: id, time } },
+        });
+        const recorded = [frame(1, 'a'), frame(2, 'a'), frame(3, 'a')];
+        const state = initialServerState(world.config());
+        state.history = { W1N1: recorded, W2N2: [frame(1, 'b')] };
+        const store = await StateStore.open(world.config());
+        try {
+          await store.save(state);
+          // A tick expires the oldest frame and records a new one.
+          recorded.shift();
+          recorded.push(frame(4, 'a'));
+          await store.save(state);
+          // An import replaces a room's history, here with another frame of the same tick.
+          state.history.W2N2 = [frame(1, 'c')];
+          await store.save(state);
+          await store.save(state);
+          assert.equal(store.revision, 3, 'unchanged history is not rewritten');
+        } finally {
+          await store.close();
+        }
+        const [snapshot] = await world.query('SELECT state FROM server_snapshot');
+        assert.ok(typeof snapshot?.state === 'string');
+        assert.deepEqual(decodeState(snapshot.state).history, {});
+        const rows = async () =>
+          (
+            await world.query(
+              'SELECT room, "time", objects FROM server_room_history ORDER BY room, "time"',
+            )
+          ).map((row) => ({ ...row, time: Number(row.time) }));
+        assert.deepEqual(await rows(), [
+          ...recorded.map(({ time, objects }) => ({
+            room: 'W1N1',
+            time,
+            objects: JSON.stringify(objects),
+          })),
+          { room: 'W2N2', time: 1, objects: JSON.stringify(frame(1, 'c').objects) },
+        ]);
+
+        const reopened = await StateStore.open(world.config());
+        try {
+          const loaded = reopened.load();
+          assert.ok(loaded);
+          assert.deepEqual(loaded.history, { W1N1: recorded, W2N2: [frame(1, 'c')] });
+          // Every frame of one room expires; the other room is removed.
+          loaded.history.W1N1.splice(0);
+          Reflect.deleteProperty(loaded.history, 'W2N2');
+          await reopened.save(loaded);
+          assert.equal(reopened.revision, 4);
+        } finally {
+          await reopened.close();
+        }
+        assert.deepEqual(await rows(), []);
+      }));
+
+    void it('rolls back room history recorded by a failed mutation', () =>
+      withWorld(backend.create, async (world) => {
+        const frame = (time: number) => ({ time, objects: {} });
+        const kernel = await ServerKernel.create(world.config());
+        try {
+          await kernel.mutate(() => {
+            kernel.state.history.W1N1 = [frame(1)];
+          });
+          await assert.rejects(
+            kernel.mutate(() => {
+              kernel.state.history.W1N1?.push(frame(2));
+              kernel.state.history.W2N2 = [frame(2)];
+              throw new Error('rejected operation');
+            }),
+            /rejected operation/,
+          );
+          assert.deepEqual(kernel.state.history, { W1N1: [frame(1)] });
+          await kernel.mutate(() => {
+            kernel.state.history.W1N1?.push(frame(3));
+          });
+        } finally {
+          await kernel.close();
+        }
+        const store = await StateStore.open(world.config());
+        try {
+          assert.deepEqual(store.load()?.history, { W1N1: [frame(1), frame(3)] });
+        } finally {
+          await store.close();
+        }
       }));
   });
 }

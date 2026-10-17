@@ -127,3 +127,36 @@ export function decodeState(serialized: string): ServerState {
   if (value.originalStorage !== undefined) assertOriginalStorageData(value.originalStorage);
   return state as unknown as ServerState;
 }
+
+export type RoomHistory = ServerState['history'];
+
+/**
+ * JSON of the world without its room history: the durable snapshot row. History frames are
+ * persisted one row each and never mutated once recorded, so they are compared by identity.
+ */
+export function snapshotJson(state: ServerState): string {
+  return JSON.stringify({ ...state, history: {} });
+}
+
+/** Per room, a new array of the same frames: later appends and expiries leave the copy as it was. */
+export function copyHistory(history: RoomHistory): RoomHistory {
+  const copy: RoomHistory = {};
+  for (const [room, frames] of Object.entries(history)) copy[room] = [...frames];
+  return copy;
+}
+
+/** Whether both histories hold the same rooms with the same frame objects in the same order. */
+export function sameHistory(a: RoomHistory, b: RoomHistory): boolean {
+  const rooms = Object.keys(a);
+  if (rooms.length !== Object.keys(b).length) return false;
+  return rooms.every((room) => {
+    const left = a[room];
+    const right = Object.hasOwn(b, room) ? b[room] : undefined;
+    return (
+      left !== undefined &&
+      right !== undefined &&
+      left.length === right.length &&
+      left.every((frame, index) => frame === right[index])
+    );
+  });
+}

@@ -57,10 +57,14 @@ The server imports game APIs only. ESLint rejects direct engine imports in both
 server source and tests; engine build-script approval covers the transitive dependency.
 
 `PersistenceModule` configures Nest's TypeORM integration. `StateStore` uses the
-`WorldSnapshot` entity and repository transactions; versioned migrations adopt
-existing SQLite `server_snapshot` tables without replacing their worlds.
-Production schema synchronization is disabled. Both databases store one atomic,
-versioned world snapshot, not separate relational rows for every game object.
+`WorldSnapshot` and `RoomHistoryFrame` entities and repository transactions;
+versioned migrations adopt existing SQLite `server_snapshot` tables without
+replacing their worlds. Production schema synchronization is disabled. Both
+databases store one atomic, versioned world snapshot, not separate relational rows
+for every game object. Room history is the exception: it only grows and expires,
+so each frame is one `server_room_history` row and the snapshot holds an empty
+`history`. A commit inserts the recorded frames and deletes the expired ones in
+the same transaction as the snapshot, which is rewritten only when it changed.
 This keeps simulation, player runtime and server metadata committed together.
 
 The SQLite driver is pinned to `better-sqlite3` 13's N-API implementation: version
