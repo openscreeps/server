@@ -138,12 +138,13 @@ for (const backend of backends) {
 
         const store = await StateStore.open(world.config());
         try {
-          assert.equal(store.revision, 3);
+          // Created, then flushed on close: the ticks were kept in memory until then.
+          assert.equal(store.revision, 2);
           assert.deepEqual(store.load(), committed);
           const loaded = store.load();
           assert.ok(loaded);
           await store.save(loaded);
-          assert.equal(store.revision, 3, 'an unchanged world is not rewritten');
+          assert.equal(store.revision, 2, 'an unchanged world is not rewritten');
         } finally {
           await store.close();
         }
@@ -192,8 +193,9 @@ for (const backend of backends) {
 
     void it('stops on a failed commit and keeps the last committed world', () =>
       withWorld(backend.create, async (world) => {
-        const store = await StateStore.open(world.config());
-        const kernel = await ServerKernel.create(world.config(), {}, store);
+        const config = { ...world.config(), commitTicks: 1 };
+        const store = await StateStore.open(config);
+        const kernel = await ServerKernel.create(config, {}, store);
         let committed: unknown;
         try {
           committed = JSON.parse(JSON.stringify(await kernel.exportSnapshot()));
@@ -208,13 +210,34 @@ for (const backend of backends) {
           mock.restoreAll();
           await kernel.close();
         }
-        const reopened = await StateStore.open(world.config());
+        const reopened = await StateStore.open(config);
         try {
           assert.equal(reopened.revision, 1);
           assert.deepEqual(reopened.load(), committed);
         } finally {
           await reopened.close();
         }
+      }));
+
+    void it('keeps the last flushed world when the server stops without closing', () =>
+      withWorld(backend.create, async (world) => {
+        const config = { ...world.config(), commitTicks: 2 };
+        const store = await StateStore.open(config);
+        const kernel = await ServerKernel.create(config, {}, store);
+        const time = kernel.state.world.gameTime;
+        await kernel.step();
+        await kernel.step();
+        await kernel.step();
+        // A crash: the database is released without the kernel flushing its third tick.
+        await store.close();
+        const restarted = await StateStore.open(config);
+        try {
+          assert.equal(restarted.revision, 2);
+          assert.equal(restarted.load()?.world.gameTime, time + 2);
+        } finally {
+          await restarted.close();
+        }
+        await assert.rejects(kernel.close(), /Durable commit failed/);
       }));
 
     void it('rolls back a rejected HTTP flag move in memory and in the durable snapshot', () =>
@@ -454,7 +477,7 @@ void describe('SQLite worlds of the previous store', () => {
 void describe('PostgreSQL worlds', { skip: postgresUrl === undefined }, () => {
   void it('are never overwritten after another writer changed them', () =>
     withWorld(postgresWorld, async (world) => {
-      const kernel = await ServerKernel.create(world.config());
+      const kernel = await ServerKernel.create({ ...world.config(), commitTicks: 1 });
       const time = kernel.state.world.gameTime;
       try {
         await world.execute('UPDATE server_snapshot SET revision = revision + 1');

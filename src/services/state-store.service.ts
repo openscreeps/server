@@ -263,14 +263,6 @@ export class StateStore {
     return state;
   }
 
-  /** Whether `state` is the committed world: the same snapshot and the same history frames. */
-  isCommitted(state: ServerState): boolean {
-    return (
-      snapshotJson(state) === this.#serialized &&
-      historyDelta(this.#history, state.history) === undefined
-    );
-  }
-
   /** Number of commits; 0 before the first commit. */
   get revision(): number {
     return this.#revision;

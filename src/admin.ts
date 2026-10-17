@@ -1,7 +1,7 @@
 /*
  * Authenticated administrative API: `POST /admin` with `{action, ...arguments}` and a bearer
- * administrator token. Every world change runs as one serialized, durably committed kernel
- * mutation; inputs are validated before any mutation starts and never name server-side files.
+ * administrator token. Every world change runs as one serialized, atomic kernel mutation; inputs
+ * are validated before any mutation starts and never name server-side files.
  */
 
 import {

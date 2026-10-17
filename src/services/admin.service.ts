@@ -1,6 +1,6 @@
 /*
- * Administrative business operations. Every world change runs as one serialized, durably committed
- * kernel mutation; inputs are validated before any mutation starts and never name server-side files.
+ * Administrative business operations. Every world change runs as one serialized, atomic kernel
+ * mutation; inputs are validated before any mutation starts and never name server-side files.
  */
 
 import { Inject, Injectable } from '@nestjs/common';
@@ -385,7 +385,7 @@ export class AdminService {
     return this.#execute(body);
   }
 
-  /** One serialized, durably committed mutation that reads the current state inside the lock. */
+  /** One serialized, atomic mutation that reads the current state inside the lock. */
   #mutate<T>(operation: (state: ServerState) => T): Promise<T> {
     return this.context.mutate(() => operation(this.context.state));
   }
