@@ -984,6 +984,8 @@ export interface paths {
         /**
          * Check e-mail availability
          * @description Public availability check used by the official web client's registration and e-mail forms. Succeeds with `{ok: 1}` when no account uses the address; otherwise returns the error envelope `exists`. A missing/empty `email` yields `invalid email`. Addresses are compared lower-cased.
+         *
+         *     Standalone: Community servers serve this check through screepsmod-auth, which answers a taken address with `User Exists` instead of `exists` and compares addresses as stored.
          */
         get: operations["registerCheckEmail"];
         put?: never;
@@ -1004,6 +1006,8 @@ export interface paths {
         /**
          * Check username availability
          * @description Public, case-insensitive username availability check. Succeeds with `{ok: 1}` when the name is free; `exists` when taken; `invalid username` when missing/empty. It does not validate the username format (that happens in `POST /api/register/set-username`).
+         *
+         *     Standalone: Community servers serve this check through screepsmod-auth, which answers a taken name with `User Exists` instead of `exists` and compares usernames case-sensitively.
          */
         get: operations["registerCheckUsername"];
         put?: never;
@@ -1131,7 +1135,7 @@ export interface paths {
         };
         /**
          * List code branches
-         * @description Lists the player's code branches with their world/simulator activation flags. If no branch named `default` exists, an empty inactive `default` branch is created first (so this GET may write). The official web client passes `withCode` (true when it needs module contents, e.g. to sync local files) and reads `list`.
+         * @description Lists the player's code branches with their world/simulator activation flags. If no branch named `default` exists, an empty inactive `default` branch is created first (so this GET may write). The official web client passes `withCode` (true when it needs module contents, e.g. to sync local files) and reads `list`. Without `withCode` the entries carry only `_id`, `branch`, `activeWorld` and `activeSim`; with it they also carry `user`, `modules` and `timestamp`.
          *
          *     Standalone: Ignores `withCode` and always returns complete branch documents including `user`, `modules` and `timestamp` (Unix milliseconds, absent until code is first saved).
          */
@@ -1337,7 +1341,7 @@ export interface paths {
          * Write Memory
          * @description Assigns `value` at `path`, deletes the value at `path` when `value` is omitted, or (without `path`) clears Memory and merges an object `value` into it. The edit is not applied synchronously: it is queued as a hidden console command executed inside the player's runtime on the given shard. Commands are queued and run only when the player's runtime reaches its console-processing step (after a main loop run); no ordering relative to other queued commands, ticks or code deployment is guaranteed by this API, and the response does not contain the evaluation result (results arrive on the console realtime channel). JSON-serialized values over 1 MiB yield `memory size is too large`.
          *
-         *     Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path` and, at execution, fails the hidden command when an intermediate path element is not an object. Returns only `{ok: 1}`.
+         *     Standalone: Rejects invalid paths (empty segments, `__proto__`) with `Incorrect memory path`. At execution, an assignment creates missing intermediate objects and fails the hidden command when an intermediate path element is a primitive or `null`; deleting below a missing element does nothing. The Screeps server (backend-local) instead queues `Memory['a']['b'] = value` (or `delete …`) as written: it accepts any path, and a missing intermediate element makes the hidden command throw, leaving Memory unchanged although the reply is a success. Returns only `{ok: 1}`.
          */
         post: operations["userMemorySet"];
         delete?: never;
@@ -5923,7 +5927,7 @@ export interface components {
             activeWorld?: boolean;
             /** @description Branch runs in the simulator. Absent on branches created by cloning until activated. */
             activeSim?: boolean;
-            /** @description Last code change: Unix milliseconds or a stored date (ISO 8601 string). */
+            /** @description Last code change as stored: Unix milliseconds for a branch last saved by `POST /api/user/code`, a date (ISO 8601 string) for one last saved by `POST /api/user/clone-branch` (both observed on screeps.com). */
             timestamp?: number | string;
         };
         UserCodeGetResponse: {
