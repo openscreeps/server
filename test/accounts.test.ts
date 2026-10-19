@@ -8,9 +8,9 @@ import { runInNewContext } from 'node:vm';
 import { gunzipSync } from 'node:zlib';
 import { BotRuntime, createWorldState } from '@openscreeps/game';
 import { ApiTestClient, type ApiCallOptions } from './api-harness.ts';
-import { createAuthService } from '../src/api/auth.ts';
+import { createAuthService, issueApiToken } from '../src/api/auth.ts';
 import { isRecord } from '../src/api/guards.ts';
-import { createUser } from '../src/api/users.ts';
+import { createUser, purgeAccountRecords, setUserPassword } from '../src/api/users.ts';
 import { configFromEnvironment, createConfig } from '../src/config.ts';
 import {
   ApiError,
@@ -22,6 +22,7 @@ import {
   type UserMessage,
 } from '../src/contracts.ts';
 import { StateStore } from '../src/services/state-store.service.ts';
+import { decodeState, snapshotJson } from '../src/storage.ts';
 import { STEAM_NEWS_TTL_MS } from '../src/services/steam-news.ts';
 
 interface Harness {
@@ -45,6 +46,7 @@ function emptyState(runtime: BotRuntime): ServerState {
     profiles: {},
     branches: {},
     tokens: {},
+    apiTokens: {},
     messages: {},
     history: {},
     statistics: [],
@@ -901,6 +903,168 @@ void describe('persistence', () => {
       });
       assert.ok(svg instanceof RawResponse);
       assert.match(String(svg.body), /fill="#112233"/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+void describe('persistent API tokens', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  async function create(h: Harness, token: string, body: Record<string, unknown> = {}) {
+    const created = (await h.call('POST', '/api/user/auth-token', { token, body })) as {
+      token: string;
+    };
+    return created.token;
+  }
+
+  void it('creates full tokens that never expire, never rotate and are stored as hashes', async () => {
+    const h = harness({ config: { tokenLifetimeMs: 60_000 } });
+    const { userId, token } = signIn(h);
+    const apiToken = await create(h, token, {
+      type: 'full',
+      endpoints: { 'GET /api/user/memory': false },
+      websockets: { console: false, rooms: false },
+      memorySegments: '',
+      description: 'deploy',
+    });
+    assert.match(apiToken, UUID);
+    assert.ok(!JSON.stringify(h.context.state).includes(apiToken));
+    assert.equal(h.context.auth.check(apiToken), userId);
+    assert.ok(h.context.auth.apiTokenId(apiToken));
+    assert.equal(h.context.auth.apiTokenId(token), undefined);
+    assert.equal(h.context.auth.check(apiToken.toUpperCase()), undefined);
+
+    // Session tokens expire; the API token still authenticates, also as `?token=`.
+    h.clock.now += 365 * 24 * 60 * 60 * 1000;
+    await rejects(h.call('GET', '/api/auth/me', { token }), 'unauthorized', 401);
+    const sessions = Object.keys(h.context.state.tokens).length;
+    const me = (await h.call('GET', '/api/auth/me', { token: apiToken })) as { _id: string };
+    assert.equal(me._id, userId);
+    const byQuery = (await h.call('GET', '/api/user/name', { query: { token: apiToken } })) as {
+      username: string;
+    };
+    assert.equal(byQuery.username, 'Alice');
+    // No replacement session token was issued for those requests.
+    assert.equal(Object.keys(h.context.state.tokens).length, sessions);
+
+    const listed = (await h.call('GET', '/api/user/auth-token', { token: apiToken })) as {
+      tokens: Array<Record<string, unknown>>;
+    };
+    const id = h.context.auth.apiTokenId(apiToken);
+    assert.deepEqual(listed.tokens, [
+      { _id: id, token: apiToken.slice(0, 8), full: true, description: 'deploy' },
+    ]);
+    assert.deepEqual(await h.call('GET', '/api/auth/query-token', { query: { token: apiToken } }), {
+      _id: id,
+      token: { full: true, token: apiToken, description: 'deploy' },
+    });
+  });
+
+  void it('refuses restricted tokens, invalid descriptions and more than 100 tokens', async () => {
+    const h = harness();
+    const { userId, token } = signIn(h);
+    await rejects(create(h, token, { type: 'selected' }), 'restricted tokens are not supported');
+    await rejects(create(h, token, { description: 7 }), 'invalid params');
+    await rejects(create(h, token, { description: 'x'.repeat(101) }), 'invalid params');
+    assert.deepEqual(h.context.state.apiTokens, {});
+    assert.match(await create(h, token, { description: null }), UUID);
+    for (let count = 1; count < 100; count++) issueApiToken(h.context, userId, null);
+    await rejects(create(h, token), 'too many tokens');
+    await rejects(h.call('GET', '/api/user/auth-token'), 'unauthorized', 401);
+    await rejects(
+      h.call('POST', '/api/user/auth-token', { token: 'x'.repeat(64) }),
+      'unauthorized',
+      401,
+    );
+  });
+
+  void it('lists and deletes only the caller’s tokens', async () => {
+    const h = harness();
+    const alice = signIn(h, 'Alice');
+    const bob = signIn(h, 'Bob');
+    const first = await create(h, alice.token);
+    h.clock.now += 1;
+    const second = await create(h, alice.token, { description: 'second' });
+    const bobs = await create(h, bob.token);
+    const list = async (token: string): Promise<Array<{ _id: string; token: string }>> => {
+      const reply = await h.call('GET', '/api/user/auth-token', { token });
+      assert.ok(isRecord(reply) && Array.isArray(reply.tokens));
+      const tokens: unknown[] = reply.tokens;
+      return tokens.map((entry) => {
+        assert.ok(isRecord(entry) && typeof entry._id === 'string');
+        return { _id: entry._id, token: String(entry.token) };
+      });
+    };
+    const listed = await list(alice.token);
+    assert.deepEqual(
+      listed.map((entry) => entry.token),
+      [first.slice(0, 8), second.slice(0, 8)],
+    );
+    const bobsId = h.context.auth.apiTokenId(bobs);
+    await rejects(
+      h.call('POST', '/api/user/delete-auth-token', {
+        token: alice.token,
+        body: { tokenId: bobsId },
+      }),
+      'token not found',
+    );
+    await rejects(
+      h.call('POST', '/api/user/delete-auth-token', { token: alice.token, body: {} }),
+      'invalid params',
+    );
+    const firstId = listed[0]?._id;
+    // A token may delete itself; the deletion ends its socket sessions after the commit.
+    await h.call('POST', '/api/user/delete-auth-token', {
+      token: first,
+      body: { tokenId: firstId },
+    });
+    assert.deepEqual(h.published.at(-1), [
+      'auth:revoked',
+      { user: alice.userId, apiToken: firstId },
+    ]);
+    await rejects(h.call('GET', '/api/auth/me', { token: first }), 'unauthorized', 401);
+    await rejects(
+      h.call('GET', '/api/auth/query-token', { query: { token: first } }),
+      'token not found',
+    );
+    assert.deepEqual(
+      (await list(alice.token)).map((entry) => entry.token),
+      [second.slice(0, 8)],
+    );
+    assert.equal(h.context.auth.check(bobs), bob.userId);
+  });
+
+  void it('survive password changes and restarts, but not account removal', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'openscreeps-api-tokens-'));
+    try {
+      const database = join(directory, 'world.sqlite');
+      const h = harness();
+      const { userId, token } = signIn(h);
+      const apiToken = await create(h, token);
+      setUserPassword(h.context, userId, 'another horse');
+      assert.equal(h.context.auth.check(token), undefined);
+      assert.equal(h.context.auth.check(apiToken), userId);
+
+      const store = await StateStore.open(createConfig({ database }));
+      await store.save(h.context.state);
+      await store.close();
+      const reopened = await StateStore.open(createConfig({ database }));
+      const state = reopened.load();
+      await reopened.close();
+      assert.ok(state);
+      // Snapshots written before API tokens existed hold none.
+      const legacy: unknown = JSON.parse(snapshotJson(state));
+      assert.ok(isRecord(legacy));
+      Reflect.deleteProperty(legacy, 'apiTokens');
+      assert.deepEqual(decodeState(JSON.stringify(legacy)).apiTokens, {});
+      const restarted = harness({ state, now: h.clock.now + 24 * 60 * 60 * 1000 });
+      assert.equal(restarted.context.auth.check(apiToken), userId);
+
+      purgeAccountRecords(restarted.context.state, userId);
+      assert.deepEqual(restarted.context.state.apiTokens, {});
+      assert.equal(restarted.context.auth.check(apiToken), undefined);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

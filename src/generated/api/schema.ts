@@ -71,9 +71,31 @@ export interface paths {
          * Get the authenticated account
          * @description Returns the private profile of the account owning the token: id, username, e-mail (and an unconfirmed `emailDirty`), CPU, badge, GCL/power progress, credit balance (`money`), notification preferences, linked Steam/GitHub data, shard CPU limits (`cpuShard`, `cpuShardUpdatedTime`), account resources and power-creep experimentation state. Only fields present in storage are serialized. The official web client calls it after storing a token and keeps the result as the signed-in account; node-screeps-api resolves restricted tokens through `GET /api/user/name` + `GET /api/user/find` instead.
          *
-         *     Standalone: Returns the private-server projection only (`_id`, `email`, `emailDirty`, `username`, `cpu`, `badge`, `password`, `lastRespawnDate`, `notifyPrefs`, `gcl`, `lastChargeTime`, `blocked`, `customBadge`, `power`, `money`, `steam`, `powerExperimentations`, `powerExperimentationTime`); never `cpuShard`, `cpuShardUpdatedTime`, `resources`, SSO links or legacy fields. `steam` is an empty object when no Steam account is linked. Token may be sent as `X-Token`, `Authorization: Bearer`, or `?token=`; each authenticated call issues a fresh token in the `X-Token` response header (default lifetime 60 s).
+         *     Standalone: Returns the private-server projection only (`_id`, `email`, `emailDirty`, `username`, `cpu`, `badge`, `password`, `lastRespawnDate`, `notifyPrefs`, `gcl`, `lastChargeTime`, `blocked`, `customBadge`, `power`, `money`, `steam`, `powerExperimentations`, `powerExperimentationTime`); never `cpuShard`, `cpuShardUpdatedTime`, `resources`, SSO links or legacy fields. `steam` is an empty object when no Steam account is linked. Token may be sent as `X-Token`, `Authorization: Bearer`, or `?token=`; each call authenticated with a session token issues a fresh session token in the `X-Token` response header (default lifetime 60 s). Persistent API tokens (`POST /api/user/auth-token`) are never replaced.
          */
         get: operations["authMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/query-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect an API token
+         * @description Returns the permissions of a screeps.com account auth token: whether it has full access, or the REST endpoints and WebSocket channel groups it is restricted to, plus its description. node-screeps-api calls it to decide between `GET /api/auth/me` and the restricted `GET /api/user/name` lookup. Unrecognized tokens produce an HTTP error.
+         *
+         *     Standalone: Unauthenticated. Looks up a persistent API token (`POST /api/user/auth-token`) by its full value and answers `{ok: 1, _id, token: {full: true, token, description}}`, where `_id` is the token's entry id, `token.token` the value sent and `description` absent when none. Session tokens and unknown tokens answer HTTP 200 `{error: "token not found"}`.
+         */
+        get: operations["authQueryToken"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1080,6 +1102,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/auth-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List API auth tokens
+         * @description Lists the signed-in account's API auth tokens for the official account page (`/account/auth-tokens`). The client reads `tokens` and renders it.
+         *
+         *     Standalone: Lists the caller's persistent API tokens, oldest first. Each entry holds `_id`, `token` (the first 8 characters of the token), `full` (always `true`) and `description` (`null` when none). Entries never carry `noRatelimitUntil`: OpenScreeps does not rate-limit API tokens.
+         */
+        get: operations["userAuthTokenList"];
+        put?: never;
+        /**
+         * Generate an API auth token
+         * @description Generates a persistent API auth token for the signed-in account. The official form posts its whole model: `type` (`full` by default), per-endpoint permissions in `endpoints`, websocket permissions in `websockets` and a `memorySegments` string. The client shows the returned `token` once ("it will not be shown again") and reloads the token list.
+         *
+         *     Standalone: `type` absent or `full` creates a full-access token; `endpoints`, `websockets` and `memorySegments` are then ignored, as the official form posts them with every request. An optional `description` must be a string of at most 100 characters (`invalid params` otherwise). The reply's `token` is a random UUID, shown only this once: the server stores a SHA-256 hash of it and its first 8 characters. The token never expires and is never rotated: responses to requests that it authenticates carry no `X-Token`, and the socket's `auth ok` returns it unchanged. It is accepted wherever session tokens are: the `X-Token` header, `Authorization: Bearer`, the `token` query parameter and the socket `auth` command. An account holds at most 100 tokens (`too many tokens`). Deleting the account removes its tokens.
+         */
+        post: operations["userAuthTokenCreate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/badge": {
         parameters: {
             query?: never;
@@ -1252,6 +1302,28 @@ export interface paths {
         get: operations["userDecorationsThemes"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/delete-auth-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke an API auth token
+         * @description Revokes one of the signed-in account's API auth tokens; the official account page reloads the token list on success.
+         *
+         *     Standalone: `tokenId` is the `_id` of one of the caller's tokens from `GET /api/user/auth-token`; an unknown id or a token of another account answers `{error: "token not found"}`. The deletion takes effect at once: later requests with the token answer HTTP 401, and socket sessions authenticated with it are closed.
+         */
+        post: operations["userAuthTokenDelete"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1535,7 +1607,7 @@ export interface paths {
          * Get the caller's username
          * @description Returns only the username of the token owner. Usable with restricted auth tokens (node-screeps-api uses it with `GET /api/user/find` when the token is not full-access).
          *
-         *     Standalone: Returns the username of the session token owner (standalone session tokens are always full-access).
+         *     Standalone: Returns the username of the token owner (OpenScreeps session tokens and API tokens are always full-access).
          */
         get: operations["userName"];
         put?: never;
@@ -1601,7 +1673,7 @@ export interface paths {
          * Change the account password
          * @description Changes the signed-in account's password. The official account page posts the current password as `oldPassword` and the new one as `password`, then re-reads `GET /api/auth/me` and returns to the account page. The official client only submits passwords that consist of letters, digits and `!@#$%^&*(),./\[]{}'";=+|_-?~`:<>` characters and contain at least one digit and one non-digit.
          *
-         *     Standalone: Standalone servers sign players in with username or e-mail plus password (`POST /api/auth/signin`); this operation changes that local password. OpenScreeps revokes the account's tokens and authenticated socket sessions whenever a password changes, so the client must sign in again afterwards.
+         *     Standalone: Standalone servers sign players in with username or e-mail plus password (`POST /api/auth/signin`); this operation changes that local password. OpenScreeps revokes the account's session tokens and closes its authenticated socket sessions whenever a password changes, so the client must sign in again afterwards. Persistent API tokens (`POST /api/user/auth-token`) stay valid until they are deleted.
          */
         post: operations["userPasswordSet"];
         delete?: never;
@@ -2228,6 +2300,18 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+            /** @description Persistent API tokens keyed by the SHA-256 hash of the token; absent in snapshots written before API tokens existed. */
+            apiTokens?: {
+                [key: string]: {
+                    _id: string;
+                    userId: string;
+                    prefix: string;
+                    description: string | null;
+                    created: number;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
             messages: {
                 [key: string]: {
                     _id: string;
@@ -2374,6 +2458,26 @@ export interface components {
             powerExperimentations: number;
             /** @description Unix ms start of the last experimentation period (0 if never). */
             powerExperimentationTime?: number;
+        };
+        AuthQueryTokenResponse: {
+            /**
+             * @description Success marker; every JSON success body carries `ok: 1`.
+             * @constant
+             */
+            ok: 1;
+            _id: string;
+            token: components["schemas"]["AuthQueryTokenResult"];
+        };
+        AuthQueryTokenResult: {
+            /** @description True if the token may call every endpoint; otherwise `endpoints`/`websockets` list the permitted ones. */
+            full: boolean;
+            /** @description Permitted REST endpoints, e.g. `GET /api/user/name`. */
+            endpoints?: string[];
+            /** @description Permitted WebSocket channel groups, e.g. `WebSockets (console)`. */
+            websockets?: string[];
+            token: string;
+            /** @description Name supplied when the token was generated. */
+            description?: string;
         };
         AuthSigninRequest: {
             /** @description Account e-mail address. */
@@ -5833,6 +5937,36 @@ export interface components {
         RoomName: string;
         /** @example shard3 */
         ShardName: string;
+        UserAuthTokenCreateResponse: {
+            /** @constant */
+            ok: 1;
+            /** @description The generated token, shown once. */
+            token: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description One API token of the account. */
+        UserAuthTokenListEntry: {
+            /** @description Token id, passed as `id` to `POST /api/user/delete-auth-token`. */
+            _id: string;
+            /** @description The token. */
+            token: string;
+            /** @description Whether the token grants full access; restricted tokens list their allowed endpoints and websockets. */
+            full: boolean;
+            /** @description Description given at creation; `null` when none. */
+            description?: string | null;
+            /** @description Real time in Unix milliseconds until which the token is exempt from rate limits. */
+            noRatelimitUntil?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        UserAuthTokenListResponse: {
+            /** @constant */
+            ok: 1;
+            tokens?: components["schemas"]["UserAuthTokenListEntry"][];
+        } & {
+            [key: string]: unknown;
+        };
         /** @description Player badge (`users.badge`) used to render the player icon. */
         UserBadge: {
             /** @description Standard badge shape number, or the custom SVG path pair of a premium/custom badge. */
@@ -6681,6 +6815,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["ServerError"];
+        };
+    };
+    authQueryToken: {
+        parameters: {
+            query: {
+                /** @description The API token to inspect. */
+                token: string;
+            };
+            header?: {
+                /** @description Server password of a password-protected private server, independent of player authentication. Required only when the host configures one; a missing or wrong value returns the API error envelope, usually with HTTP 200. */
+                "X-Server-Password"?: components["parameters"]["ServerPassword"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success, or a logical error in the HTTP 200 `{error}` envelope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthQueryTokenResponse"] | components["schemas"]["ApiError"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     authSignin: {
@@ -8357,6 +8518,94 @@ export interface operations {
             };
         };
     };
+    userAuthTokenList: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Legacy header: the official web client sends the token value here as well as in X-Token. */
+                "X-Username"?: components["parameters"]["LegacyUsername"];
+                /** @description Server password of a password-protected private server, independent of player authentication. Required only when the host configures one; a missing or wrong value returns the API error envelope, usually with HTTP 200. */
+                "X-Server-Password"?: components["parameters"]["ServerPassword"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success, or a logical error in the HTTP 200 `{error}` envelope. */
+            200: {
+                headers: {
+                    /** @description Rotated session token when issued by the server; store it for subsequent authenticated requests. */
+                    "X-Token"?: string;
+                    "X-RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "X-RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "X-RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserAuthTokenListResponse"] | components["schemas"]["ApiError"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    userAuthTokenCreate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Legacy header: the official web client sends the token value here as well as in X-Token. */
+                "X-Username"?: components["parameters"]["LegacyUsername"];
+                /** @description Server password of a password-protected private server, independent of player authentication. Required only when the host configures one; a missing or wrong value returns the API error envelope, usually with HTTP 200. */
+                "X-Server-Password"?: components["parameters"]["ServerPassword"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Token type; the form default is `full`. */
+                    type?: string;
+                    /** @description Endpoint permissions keyed `METHOD /api/path`; the form offers `GET /api/user/name`, `GET /api/user/money-history`, `GET /api/market/my-orders`, `GET /api/user/memory`, `GET /api/user/memory-segment` and `POST /api/user/memory-segment` (all `false` by default). */
+                    endpoints?: {
+                        [key: string]: boolean;
+                    };
+                    /** @description Websocket permissions (form defaults `console: false`, `rooms: false`). */
+                    websockets?: {
+                        console?: boolean;
+                        rooms?: boolean;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                    /** @description Memory segment selection entered as text (empty by default). */
+                    memorySegments?: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Success, or a logical error in the HTTP 200 `{error}` envelope. */
+            200: {
+                headers: {
+                    /** @description Rotated session token when issued by the server; store it for subsequent authenticated requests. */
+                    "X-Token"?: string;
+                    "X-RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "X-RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "X-RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserAuthTokenCreateResponse"] | components["schemas"]["ApiError"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     userBadgeSet: {
         parameters: {
             query?: never;
@@ -8679,6 +8928,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserDecorationsThemesResponse"] | components["schemas"]["ApiError"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    userAuthTokenDelete: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Legacy header: the official web client sends the token value here as well as in X-Token. */
+                "X-Username"?: components["parameters"]["LegacyUsername"];
+                /** @description Server password of a password-protected private server, independent of player authentication. Required only when the host configures one; a missing or wrong value returns the API error envelope, usually with HTTP 200. */
+                "X-Server-Password"?: components["parameters"]["ServerPassword"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Identifier of the token entry (from the template-bound token list). */
+                    tokenId: string;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Success, or a logical error in the HTTP 200 `{error}` envelope. */
+            200: {
+                headers: {
+                    /** @description Rotated session token when issued by the server; store it for subsequent authenticated requests. */
+                    "X-Token"?: string;
+                    "X-RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "X-RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "X-RateLimit-Reset": components["headers"]["RateLimitReset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"] | components["schemas"]["ApiError"];
                 };
             };
             401: components["responses"]["Unauthorized"];

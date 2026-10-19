@@ -55,6 +55,7 @@ function context(assetDirectory?: string): ServerContext {
     profiles: {},
     branches: {},
     tokens: {},
+    apiTokens: {},
     messages: {},
     history: {},
     statistics: [],

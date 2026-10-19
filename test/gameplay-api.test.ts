@@ -98,6 +98,7 @@ function harness(): { state: ServerState; context: ApiContext } {
     profiles: {},
     branches: {},
     tokens: {},
+    apiTokens: {},
     messages: {},
     history: {},
     statistics: [],
@@ -125,6 +126,7 @@ function harness(): { state: ServerState; context: ApiContext } {
     // Fixture tokens are user ids.
     auth: {
       check: (token) => (Object.hasOwn(state.world.users, token) ? token : undefined),
+      apiTokenId: () => undefined,
       issue: (userId) => userId,
     },
   };

@@ -133,6 +133,21 @@ export type AuthMeResult = SchemaOperations["authMe"]['responses'][200]['content
 export type AuthMeSuccess = Exclude<AuthMeResult, ErrorEnvelope>;
 
 /**
+ * Inspect an API token
+ */
+export interface AuthQueryTokenRequest {
+  path?: never;
+  query: NonNullable<SchemaOperations["authQueryToken"]['parameters']["query"]>;
+  headers?: NonNullable<SchemaOperations["authQueryToken"]['parameters']["header"]>;
+  body?: never;
+}
+export type AuthQueryTokenResponses = 
+  | { status: 200; contentType: string; body: SchemaOperations["authQueryToken"]['responses'][200]['content']["application/json"] }
+  | { status: 429; contentType: string; body: SchemaOperations["authQueryToken"]['responses'][429]['content']["application/json"] };
+export type AuthQueryTokenResult = SchemaOperations["authQueryToken"]['responses'][200]['content']["application/json"];
+export type AuthQueryTokenSuccess = Exclude<AuthQueryTokenResult, ErrorEnvelope>;
+
+/**
  * Sign in with password
  */
 export interface AuthSigninRequest {
@@ -939,6 +954,40 @@ export type PlatformSteamNewsResult = SchemaOperations["platformSteamNews"]['res
 export type PlatformSteamNewsSuccess = Exclude<PlatformSteamNewsResult, ErrorEnvelope>;
 
 /**
+ * List API auth tokens
+ */
+export interface UserAuthTokenListRequest {
+  path?: never;
+  query?: never;
+  headers?: NonNullable<SchemaOperations["userAuthTokenList"]['parameters']["header"]>;
+  body?: never;
+}
+export type UserAuthTokenListResponses = 
+  | { status: 200; contentType: string; body: SchemaOperations["userAuthTokenList"]['responses'][200]['content']["application/json"] }
+  | { status: 401; contentType: string; body: SchemaOperations["userAuthTokenList"]['responses'][401]['content']["application/json"] }
+  | { status: 429; contentType: string; body: SchemaOperations["userAuthTokenList"]['responses'][429]['content']["application/json"] }
+  | { status: 500; contentType: string; body: SchemaOperations["userAuthTokenList"]['responses'][500]['content']["application/json"] };
+export type UserAuthTokenListResult = SchemaOperations["userAuthTokenList"]['responses'][200]['content']["application/json"];
+export type UserAuthTokenListSuccess = Exclude<UserAuthTokenListResult, ErrorEnvelope>;
+
+/**
+ * Generate an API auth token
+ */
+export interface UserAuthTokenCreateRequest {
+  path?: never;
+  query?: never;
+  headers?: NonNullable<SchemaOperations["userAuthTokenCreate"]['parameters']["header"]>;
+  body: NonNullable<SchemaOperations["userAuthTokenCreate"]['requestBody']>['content']["application/json"];
+}
+export type UserAuthTokenCreateResponses = 
+  | { status: 200; contentType: string; body: SchemaOperations["userAuthTokenCreate"]['responses'][200]['content']["application/json"] }
+  | { status: 401; contentType: string; body: SchemaOperations["userAuthTokenCreate"]['responses'][401]['content']["application/json"] }
+  | { status: 429; contentType: string; body: SchemaOperations["userAuthTokenCreate"]['responses'][429]['content']["application/json"] }
+  | { status: 500; contentType: string; body: SchemaOperations["userAuthTokenCreate"]['responses'][500]['content']["application/json"] };
+export type UserAuthTokenCreateResult = SchemaOperations["userAuthTokenCreate"]['responses'][200]['content']["application/json"];
+export type UserAuthTokenCreateSuccess = Exclude<UserAuthTokenCreateResult, ErrorEnvelope>;
+
+/**
  * Set the account badge
  */
 export interface UserBadgeSetRequest {
@@ -1094,6 +1143,23 @@ export type UserDecorationsThemesResponses =
   | { status: 500; contentType: string; body: SchemaOperations["userDecorationsThemes"]['responses'][500]['content']["application/json"] };
 export type UserDecorationsThemesResult = SchemaOperations["userDecorationsThemes"]['responses'][200]['content']["application/json"];
 export type UserDecorationsThemesSuccess = Exclude<UserDecorationsThemesResult, ErrorEnvelope>;
+
+/**
+ * Revoke an API auth token
+ */
+export interface UserAuthTokenDeleteRequest {
+  path?: never;
+  query?: never;
+  headers?: NonNullable<SchemaOperations["userAuthTokenDelete"]['parameters']["header"]>;
+  body: NonNullable<SchemaOperations["userAuthTokenDelete"]['requestBody']>['content']["application/json"];
+}
+export type UserAuthTokenDeleteResponses = 
+  | { status: 200; contentType: string; body: SchemaOperations["userAuthTokenDelete"]['responses'][200]['content']["application/json"] }
+  | { status: 401; contentType: string; body: SchemaOperations["userAuthTokenDelete"]['responses'][401]['content']["application/json"] }
+  | { status: 429; contentType: string; body: SchemaOperations["userAuthTokenDelete"]['responses'][429]['content']["application/json"] }
+  | { status: 500; contentType: string; body: SchemaOperations["userAuthTokenDelete"]['responses'][500]['content']["application/json"] };
+export type UserAuthTokenDeleteResult = SchemaOperations["userAuthTokenDelete"]['responses'][200]['content']["application/json"];
+export type UserAuthTokenDeleteSuccess = Exclude<UserAuthTokenDeleteResult, ErrorEnvelope>;
 
 /**
  * Delete a branch
@@ -1678,6 +1744,14 @@ export interface Operations {
     result: AuthMeResult;
     success: AuthMeSuccess;
   };
+  authQueryToken: {
+    method: "get";
+    path: "/api/auth/query-token";
+    request: AuthQueryTokenRequest;
+    responses: AuthQueryTokenResponses;
+    result: AuthQueryTokenResult;
+    success: AuthQueryTokenSuccess;
+  };
   authSignin: {
     method: "post";
     path: "/api/auth/signin";
@@ -2054,6 +2128,22 @@ export interface Operations {
     result: PlatformSteamNewsResult;
     success: PlatformSteamNewsSuccess;
   };
+  userAuthTokenList: {
+    method: "get";
+    path: "/api/user/auth-token";
+    request: UserAuthTokenListRequest;
+    responses: UserAuthTokenListResponses;
+    result: UserAuthTokenListResult;
+    success: UserAuthTokenListSuccess;
+  };
+  userAuthTokenCreate: {
+    method: "post";
+    path: "/api/user/auth-token";
+    request: UserAuthTokenCreateRequest;
+    responses: UserAuthTokenCreateResponses;
+    result: UserAuthTokenCreateResult;
+    success: UserAuthTokenCreateSuccess;
+  };
   userBadgeSet: {
     method: "post";
     path: "/api/user/badge";
@@ -2125,6 +2215,14 @@ export interface Operations {
     responses: UserDecorationsThemesResponses;
     result: UserDecorationsThemesResult;
     success: UserDecorationsThemesSuccess;
+  };
+  userAuthTokenDelete: {
+    method: "post";
+    path: "/api/user/delete-auth-token";
+    request: UserAuthTokenDeleteRequest;
+    responses: UserAuthTokenDeleteResponses;
+    result: UserAuthTokenDeleteResult;
+    success: UserAuthTokenDeleteSuccess;
   };
   userDeleteBranch: {
     method: "post";
@@ -2516,6 +2614,36 @@ export const operations = {
         "Token"
       ]
     ]
+  },
+  authQueryToken: {
+    "operationId": "authQueryToken",
+    "method": "GET",
+    "path": "/api/auth/query-token",
+    "parameters": [
+      {
+        "name": "token",
+        "in": "query",
+        "required": true,
+        "wildcard": false,
+        "explode": true
+      },
+      {
+        "name": "X-Server-Password",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      }
+    ],
+    "responses": {
+      "200": {
+        "application/json": "json"
+      },
+      "429": {
+        "application/json": "json"
+      }
+    },
+    "security": []
   },
   authSignin: {
     "operationId": "authSignin",
@@ -4622,6 +4750,91 @@ export const operations = {
     },
     "security": []
   },
+  userAuthTokenList: {
+    "operationId": "userAuthTokenList",
+    "method": "GET",
+    "path": "/api/user/auth-token",
+    "parameters": [
+      {
+        "name": "X-Username",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      },
+      {
+        "name": "X-Server-Password",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      }
+    ],
+    "responses": {
+      "200": {
+        "application/json": "json"
+      },
+      "401": {
+        "application/json": "json"
+      },
+      "429": {
+        "application/json": "json"
+      },
+      "500": {
+        "application/json": "json"
+      }
+    },
+    "security": [
+      [
+        "Token"
+      ]
+    ]
+  },
+  userAuthTokenCreate: {
+    "operationId": "userAuthTokenCreate",
+    "method": "POST",
+    "path": "/api/user/auth-token",
+    "parameters": [
+      {
+        "name": "X-Username",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      },
+      {
+        "name": "X-Server-Password",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      }
+    ],
+    "requestBody": {
+      "required": true,
+      "contentType": "application/json",
+      "kind": "json"
+    },
+    "responses": {
+      "200": {
+        "application/json": "json"
+      },
+      "401": {
+        "application/json": "json"
+      },
+      "429": {
+        "application/json": "json"
+      },
+      "500": {
+        "application/json": "json"
+      }
+    },
+    "security": [
+      [
+        "Token"
+      ]
+    ]
+  },
   userBadgeSet: {
     "operationId": "userBadgeSet",
     "method": "POST",
@@ -5011,6 +5224,51 @@ export const operations = {
         "explode": false
       }
     ],
+    "responses": {
+      "200": {
+        "application/json": "json"
+      },
+      "401": {
+        "application/json": "json"
+      },
+      "429": {
+        "application/json": "json"
+      },
+      "500": {
+        "application/json": "json"
+      }
+    },
+    "security": [
+      [
+        "Token"
+      ]
+    ]
+  },
+  userAuthTokenDelete: {
+    "operationId": "userAuthTokenDelete",
+    "method": "POST",
+    "path": "/api/user/delete-auth-token",
+    "parameters": [
+      {
+        "name": "X-Username",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      },
+      {
+        "name": "X-Server-Password",
+        "in": "header",
+        "required": false,
+        "wildcard": false,
+        "explode": false
+      }
+    ],
+    "requestBody": {
+      "required": true,
+      "contentType": "application/json",
+      "kind": "json"
+    },
     "responses": {
       "200": {
         "application/json": "json"
@@ -6458,6 +6716,10 @@ export interface OperationHandlers<Context = void> {
    */
   authMe(request: AuthMeRequest, context: Context): AuthMeResult | Promise<AuthMeResult>;
   /**
+   * Inspect an API token
+   */
+  authQueryToken(request: AuthQueryTokenRequest, context: Context): AuthQueryTokenResult | Promise<AuthQueryTokenResult>;
+  /**
    * Sign in with password
    */
   authSignin(request: AuthSigninRequest, context: Context): AuthSigninResult | Promise<AuthSigninResult>;
@@ -6646,6 +6908,14 @@ export interface OperationHandlers<Context = void> {
    */
   platformSteamNews(request: PlatformSteamNewsRequest, context: Context): PlatformSteamNewsResult | Promise<PlatformSteamNewsResult>;
   /**
+   * List API auth tokens
+   */
+  userAuthTokenList(request: UserAuthTokenListRequest, context: Context): UserAuthTokenListResult | Promise<UserAuthTokenListResult>;
+  /**
+   * Generate an API auth token
+   */
+  userAuthTokenCreate(request: UserAuthTokenCreateRequest, context: Context): UserAuthTokenCreateResult | Promise<UserAuthTokenCreateResult>;
+  /**
    * Set the account badge
    */
   userBadgeSet(request: UserBadgeSetRequest, context: Context): UserBadgeSetResult | Promise<UserBadgeSetResult>;
@@ -6681,6 +6951,10 @@ export interface OperationHandlers<Context = void> {
    * List decoration themes
    */
   userDecorationsThemes(request: UserDecorationsThemesRequest, context: Context): UserDecorationsThemesResult | Promise<UserDecorationsThemesResult>;
+  /**
+   * Revoke an API auth token
+   */
+  userAuthTokenDelete(request: UserAuthTokenDeleteRequest, context: Context): UserAuthTokenDeleteResult | Promise<UserAuthTokenDeleteResult>;
   /**
    * Delete a branch
    */
@@ -6855,12 +7129,25 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
    *
    * Returns the private profile of the account owning the token: id, username, e-mail (and an unconfirmed `emailDirty`), CPU, badge, GCL/power progress, credit balance (`money`), notification preferences, linked Steam/GitHub data, shard CPU limits (`cpuShard`, `cpuShardUpdatedTime`), account resources and power-creep experimentation state. Only fields present in storage are serialized. The official web client calls it after storing a token and keeps the result as the signed-in account; node-screeps-api resolves restricted tokens through `GET /api/user/name` + `GET /api/user/find` instead.
    *
-   * Standalone: Returns the private-server projection only (`_id`, `email`, `emailDirty`, `username`, `cpu`, `badge`, `password`, `lastRespawnDate`, `notifyPrefs`, `gcl`, `lastChargeTime`, `blocked`, `customBadge`, `power`, `money`, `steam`, `powerExperimentations`, `powerExperimentationTime`); never `cpuShard`, `cpuShardUpdatedTime`, `resources`, SSO links or legacy fields. `steam` is an empty object when no Steam account is linked. Token may be sent as `X-Token`, `Authorization: Bearer`, or `?token=`; each authenticated call issues a fresh token in the `X-Token` response header (default lifetime 60 s).
+   * Standalone: Returns the private-server projection only (`_id`, `email`, `emailDirty`, `username`, `cpu`, `badge`, `password`, `lastRespawnDate`, `notifyPrefs`, `gcl`, `lastChargeTime`, `blocked`, `customBadge`, `power`, `money`, `steam`, `powerExperimentations`, `powerExperimentationTime`); never `cpuShard`, `cpuShardUpdatedTime`, `resources`, SSO links or legacy fields. `steam` is an empty object when no Steam account is linked. Token may be sent as `X-Token`, `Authorization: Bearer`, or `?token=`; each call authenticated with a session token issues a fresh session token in the `X-Token` response header (default lifetime 60 s). Persistent API tokens (`POST /api/user/auth-token`) are never replaced.
    *
    * `GET /api/auth/me`
    */
   authMe(input: AuthMeRequest = {}, init?: RequestOptions): Promise<AuthMeSuccess> {
     return this.call("authMe", input, init);
+  }
+
+  /**
+   * Inspect an API token
+   *
+   * Returns the permissions of a screeps.com account auth token: whether it has full access, or the REST endpoints and WebSocket channel groups it is restricted to, plus its description. node-screeps-api calls it to decide between `GET /api/auth/me` and the restricted `GET /api/user/name` lookup. Unrecognized tokens produce an HTTP error.
+   *
+   * Standalone: Unauthenticated. Looks up a persistent API token (`POST /api/user/auth-token`) by its full value and answers `{ok: 1, _id, token: {full: true, token, description}}`, where `_id` is the token's entry id, `token.token` the value sent and `description` absent when none. Session tokens and unknown tokens answer HTTP 200 `{error: "token not found"}`.
+   *
+   * `GET /api/auth/query-token`
+   */
+  authQueryToken(input: AuthQueryTokenRequest, init?: RequestOptions): Promise<AuthQueryTokenSuccess> {
+    return this.call("authQueryToken", input, init);
   }
 
   /**
@@ -7439,6 +7726,32 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
   }
 
   /**
+   * List API auth tokens
+   *
+   * Lists the signed-in account's API auth tokens for the official account page (`/account/auth-tokens`). The client reads `tokens` and renders it.
+   *
+   * Standalone: Lists the caller's persistent API tokens, oldest first. Each entry holds `_id`, `token` (the first 8 characters of the token), `full` (always `true`) and `description` (`null` when none). Entries never carry `noRatelimitUntil`: OpenScreeps does not rate-limit API tokens.
+   *
+   * `GET /api/user/auth-token`
+   */
+  userAuthTokenList(input: UserAuthTokenListRequest = {}, init?: RequestOptions): Promise<UserAuthTokenListSuccess> {
+    return this.call("userAuthTokenList", input, init);
+  }
+
+  /**
+   * Generate an API auth token
+   *
+   * Generates a persistent API auth token for the signed-in account. The official form posts its whole model: `type` (`full` by default), per-endpoint permissions in `endpoints`, websocket permissions in `websockets` and a `memorySegments` string. The client shows the returned `token` once ("it will not be shown again") and reloads the token list.
+   *
+   * Standalone: `type` absent or `full` creates a full-access token; `endpoints`, `websockets` and `memorySegments` are then ignored, as the official form posts them with every request. An optional `description` must be a string of at most 100 characters (`invalid params` otherwise). The reply's `token` is a random UUID, shown only this once: the server stores a SHA-256 hash of it and its first 8 characters. The token never expires and is never rotated: responses to requests that it authenticates carry no `X-Token`, and the socket's `auth ok` returns it unchanged. It is accepted wherever session tokens are: the `X-Token` header, `Authorization: Bearer`, the `token` query parameter and the socket `auth` command. An account holds at most 100 tokens (`too many tokens`). Deleting the account removes its tokens.
+   *
+   * `POST /api/user/auth-token`
+   */
+  userAuthTokenCreate(input: UserAuthTokenCreateRequest, init?: RequestOptions): Promise<UserAuthTokenCreateSuccess> {
+    return this.call("userAuthTokenCreate", input, init);
+  }
+
+  /**
    * Set the account badge
    *
    * Validates and stores the player's badge: colors `#rrggbb`, `param` -100..100, `type` 1-24 or exactly the caller's assigned custom badge paths; `flip` is coerced to boolean. Any violation yields `invalid params`.
@@ -7549,6 +7862,19 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
    */
   userDecorationsThemes(input: UserDecorationsThemesRequest = {}, init?: RequestOptions): Promise<UserDecorationsThemesSuccess> {
     return this.call("userDecorationsThemes", input, init);
+  }
+
+  /**
+   * Revoke an API auth token
+   *
+   * Revokes one of the signed-in account's API auth tokens; the official account page reloads the token list on success.
+   *
+   * Standalone: `tokenId` is the `_id` of one of the caller's tokens from `GET /api/user/auth-token`; an unknown id or a token of another account answers `{error: "token not found"}`. The deletion takes effect at once: later requests with the token answer HTTP 401, and socket sessions authenticated with it are closed.
+   *
+   * `POST /api/user/delete-auth-token`
+   */
+  userAuthTokenDelete(input: UserAuthTokenDeleteRequest, init?: RequestOptions): Promise<UserAuthTokenDeleteSuccess> {
+    return this.call("userAuthTokenDelete", input, init);
   }
 
   /**
@@ -7728,7 +8054,7 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
    *
    * Returns only the username of the token owner. Usable with restricted auth tokens (node-screeps-api uses it with `GET /api/user/find` when the token is not full-access).
    *
-   * Standalone: Returns the username of the session token owner (standalone session tokens are always full-access).
+   * Standalone: Returns the username of the token owner (OpenScreeps session tokens and API tokens are always full-access).
    *
    * `GET /api/user/name`
    */
@@ -7765,7 +8091,7 @@ export class Client extends OpenApiClient<Operations, SecuritySchemeName> {
    *
    * Changes the signed-in account's password. The official account page posts the current password as `oldPassword` and the new one as `password`, then re-reads `GET /api/auth/me` and returns to the account page. The official client only submits passwords that consist of letters, digits and `!@#$%^&*(),./\[]{}'";=+|_-?~`:<>` characters and contain at least one digit and one non-digit.
    *
-   * Standalone: Standalone servers sign players in with username or e-mail plus password (`POST /api/auth/signin`); this operation changes that local password. OpenScreeps revokes the account's tokens and authenticated socket sessions whenever a password changes, so the client must sign in again afterwards.
+   * Standalone: Standalone servers sign players in with username or e-mail plus password (`POST /api/auth/signin`); this operation changes that local password. OpenScreeps revokes the account's session tokens and closes its authenticated socket sessions whenever a password changes, so the client must sign in again afterwards. Persistent API tokens (`POST /api/user/auth-token`) stay valid until they are deleted.
    *
    * `POST /api/user/password`
    */

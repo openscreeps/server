@@ -3,8 +3,14 @@
  * (replacement for backend `authlib.js` and the passport token strategy of `api/auth.js`).
  */
 
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { ApiError, type AuthService, type ServerContext } from '../contracts.ts';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import {
+  ApiError,
+  type ApiTokenRecord,
+  type AuthService,
+  type ServerContext,
+  type ServerState,
+} from '../contracts.ts';
 import { isRecord } from './guards.ts';
 
 /** Screeps Steam application id (backend `steamAppId`). */
@@ -19,18 +25,61 @@ const SCRYPT_P = 1;
 const SCRYPT_KEY_LENGTH = 64;
 const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+/** Persistent API tokens are random (version 4) UUIDs; session tokens are 64 hex characters. */
+const API_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+/** The persistent API token record of `token`, when `token` is one. Call while holding the lock. */
+export function findApiToken(state: ServerState, token: string): ApiTokenRecord | undefined {
+  if (!API_TOKEN_PATTERN.test(token)) return undefined;
+  const hash = hashToken(token);
+  return Object.hasOwn(state.apiTokens, hash) ? state.apiTokens[hash] : undefined;
+}
+
+/**
+ * Creates a persistent API token of `userId` and returns it; only its hash and its first 8
+ * characters are stored. Call inside `context.mutate`.
+ */
+export function issueApiToken(
+  context: ServerContext,
+  userId: string,
+  description: string | null,
+): string {
+  const token = randomUUID();
+  context.state.apiTokens[hashToken(token)] = {
+    _id: randomBytes(12).toString('hex'),
+    userId,
+    prefix: token.slice(0, 8),
+    description,
+    created: context.now(),
+  };
+  return token;
+}
+
+/** Deletes every persistent API token of `userId`. Lock-held. */
+export function revokeApiTokens(state: ServerState, userId: string): void {
+  for (const [hash, entry] of Object.entries(state.apiTokens)) {
+    if (entry.userId === userId) Reflect.deleteProperty(state.apiTokens, hash);
+  }
 }
 
 export function createAuthService(context: ServerContext): AuthService {
   return {
     check(token) {
+      const apiToken = findApiToken(context.state, token);
+      if (apiToken) {
+        return context.state.world.users[apiToken.userId] ? apiToken.userId : undefined;
+      }
       if (!TOKEN_PATTERN.test(token)) return undefined;
       const entry = context.state.tokens[hashToken(token)];
       if (!entry || entry.expires <= context.now()) return undefined;
       return context.state.world.users[entry.userId] ? entry.userId : undefined;
+    },
+    apiTokenId(token) {
+      return findApiToken(context.state, token)?._id;
     },
     issue(userId) {
       const { tokens } = context.state;

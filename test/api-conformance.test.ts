@@ -351,6 +351,47 @@ void describe('HTTP contract conformance', () => {
       assert.equal(missingAsset.status, 404);
       await anonymous.leaderboardFind({ query: { mode: 'world', username: 'Conformance' } });
 
+      // --- persistent API tokens: never rotated, full access --------------------------------
+      const created = await player.userAuthTokenCreate({
+        body: {
+          type: 'full',
+          endpoints: { 'GET /api/user/name': false },
+          websockets: { console: false, rooms: false },
+          memorySegments: '',
+        },
+      });
+      assert.match(
+        created.token,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      const restricted = await player.send('userAuthTokenCreate', { body: { type: 'selected' } });
+      assert.deepEqual(restricted.body, { error: 'restricted tokens are not supported' });
+      const tokenPlayer = createClient({
+        baseUrl,
+        credentials: { Token: created.token },
+        fetch: recorder.fetch,
+      });
+      const tokenMe = await tokenPlayer.send('authMe', {});
+      assert.equal(tokenMe.status, 200);
+      assert.equal(tokenMe.headers.get('X-Token'), null);
+      const listed = await tokenPlayer.userAuthTokenList({});
+      assert.deepEqual(
+        listed.tokens?.map(({ token, full, description }) => ({ token, full, description })),
+        [{ token: created.token.slice(0, 8), full: true, description: null }],
+      );
+      const tokenId = listed.tokens[0]?._id;
+      assert.ok(tokenId);
+      const queried = await anonymous.authQueryToken({ query: { token: created.token } });
+      assert.deepEqual(queried, {
+        ok: 1,
+        _id: tokenId,
+        token: { full: true, token: created.token },
+      });
+      const unknownToken = await anonymous.send('authQueryToken', {
+        query: { token: signin.token },
+      });
+      assert.deepEqual(unknownToken.body, { error: 'token not found' });
+
       // --- respawn last: it removes the player's rooms ---------------------------------------
       await player.userRespawn({});
       assert.equal((await player.userWorldStatus({})).status, 'empty');
@@ -359,7 +400,7 @@ void describe('HTTP contract conformance', () => {
       });
       assert.deepEqual(details.orders, []);
 
-      // --- password change revokes every session ----------------------------------------------
+      // --- password change revokes every session token ----------------------------------------
       const wrongPassword = await respondent.send('userPasswordSet', {
         body: { oldPassword: 'not-the-password', password: 'replacement-password-1' },
       });
@@ -374,6 +415,12 @@ void describe('HTTP contract conformance', () => {
       await anonymous.authSignin({
         body: { email: 'Conformance', password: 'replacement-password-1' },
       });
+      // A password change keeps persistent API tokens; deleting one revokes it.
+      assert.equal((await tokenPlayer.authMe({})).username, 'Conformance');
+      const deleted = await tokenPlayer.send('userAuthTokenDelete', { body: { tokenId } });
+      assert.deepEqual(deleted.body, { ok: 1 });
+      assert.equal(deleted.headers.get('X-Token'), null);
+      assert.equal((await tokenPlayer.send('authMe', {})).status, 401);
 
       assert.deepEqual(recorder.failures, []);
       assert.deepEqual(recorder.unexercised(), []);

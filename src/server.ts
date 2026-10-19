@@ -20,6 +20,7 @@ import { createAuthService } from './api/auth.ts';
 import { HostController, InformationController, RootController } from './http.ts';
 import { AdminController, AdminGuard } from './admin.ts';
 import { AuthController, RegistrationController, UserController } from './api/accounts.ts';
+import { ApiTokensController } from './api/api-tokens.ts';
 import { MessagesController } from './api/messages.ts';
 import { GameController } from './api/game.ts';
 import { MarketController } from './api/market.ts';
@@ -38,6 +39,7 @@ import {
   SERVER_CONTEXT,
   secretsEqual,
 } from './api/transport.ts';
+import { ApiTokensService } from './services/api-tokens.ts';
 import { AccountsService } from './services/accounts.ts';
 import { MessagesService } from './services/messages.ts';
 import { GameService } from './services/game.ts';
@@ -98,6 +100,7 @@ export class OpenScreepsModule implements OnModuleDestroy, OnModuleInit {
         HostController,
         AdminController,
         AuthController,
+        ApiTokensController,
         RegistrationController,
         UserController,
         MessagesController,
@@ -127,6 +130,7 @@ export class OpenScreepsModule implements OnModuleDestroy, OnModuleInit {
         ApiInterceptor,
         AdminGuard,
         AccountsService,
+        ApiTokensService,
         MessagesService,
         GameService,
         MarketService,

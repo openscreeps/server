@@ -31,6 +31,7 @@ import {
   type JsonValue,
 } from '@openscreeps/game';
 import type { ServerContext, ServerState, TickEvent, UserProfile } from '../contracts.ts';
+import { revokeApiTokens } from '../api/auth.ts';
 import { htmlEncode } from '../realtime/encode.ts';
 
 /** Original storage records without a canonical home (`ServerState.originalStorage`). */
@@ -1046,6 +1047,8 @@ function usersAdapter(context: ServerContext): CollectionAdapter {
           Reflect.deleteProperty(users, key);
           Reflect.deleteProperty(state.profiles, key);
           Reflect.deleteProperty(state.jobs, NOTIFY_JOB + key);
+          // A removed or recreated account keeps no persistent API token; a new password does.
+          revokeApiTokens(state, key);
           if (!user) {
             revoke(key);
             continue;

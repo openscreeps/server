@@ -50,8 +50,12 @@ export interface RealtimeConnection {
 
 class Session {
   userId: string | undefined;
+  /** The persistent API token the session authenticated with; its deletion closes the session. */
+  apiTokenId: string | undefined;
   /** The user an `auth` command is rotating a token for; a revocation of that user clears it. */
   authenticating: string | undefined;
+  /** The API token an `auth` command checks; its deletion clears {@link authenticating}. */
+  authenticatingApiToken: string | undefined;
   gzip = false;
   closed = false;
   /** Every subscribed channel name, rooms included. */
@@ -258,25 +262,31 @@ export class RealtimeHub {
 
   /*
    * Authentication. The token is checked under a read first so failed attempts never commit;
-   * a valid one is rotated (and the user marked online) in a mutation. Any failure, or success
-   * as another user, drops every subscription that needed the previous identity. A revocation
-   * of the user committed while the rotation is in flight fails the attempt.
+   * a valid session token is rotated (and the user marked online) in a mutation. A persistent
+   * API token is never rotated: `auth ok` returns it unchanged. Any failure, or success as
+   * another user, drops every subscription that needed the previous identity. A revocation of
+   * the user or of the API token committed while the attempt is in flight fails the attempt.
    */
 
   async #authenticate(session: Session, token: string): Promise<void> {
     const context = this.#context;
     let userId: string | undefined;
+    let apiTokenId: string | undefined;
     let issued: string | undefined;
     try {
-      userId = await context.read(() => context.auth.check(token));
+      [userId, apiTokenId] = await context.read(() => [
+        context.auth.check(token),
+        context.auth.apiTokenId(token),
+      ]);
       const candidate = userId;
       if (candidate !== undefined) {
         session.authenticating = candidate;
+        session.authenticatingApiToken = apiTokenId;
         issued = await context.mutate(() => {
           if (context.auth.check(token) !== candidate) return undefined;
           const profile = context.state.profiles[candidate];
           if (profile) profile.lastOnline = context.now();
-          return context.auth.issue(candidate);
+          return apiTokenId === undefined ? context.auth.issue(candidate) : token;
         });
         if (session.authenticating !== candidate) issued = undefined;
       }
@@ -285,16 +295,19 @@ export class RealtimeHub {
       issued = undefined;
     } finally {
       session.authenticating = undefined;
+      session.authenticatingApiToken = undefined;
     }
     if (session.closed) return;
     if (userId === undefined || issued === undefined) {
       this.#dropAuthenticated(session);
       session.userId = undefined;
+      session.apiTokenId = undefined;
       session.writeLine('auth failed');
       return;
     }
     if (session.userId !== userId) this.#dropAuthenticated(session);
     session.userId = userId;
+    session.apiTokenId = apiTokenId;
     session.writeLine(`auth ok ${issued}`);
   }
 
@@ -588,10 +601,18 @@ export class RealtimeHub {
     if (channel === 'auth:revoked') {
       // The user's tokens were revoked (password change, deletion) by a committed mutation: end
       // their sessions, so a reconnecting client must authenticate again with a valid token.
+      // With `apiToken`, only that persistent API token was deleted: end only its sessions.
       if (!isRecord(data) || typeof data.user !== 'string') return;
+      const apiToken = typeof data.apiToken === 'string' ? data.apiToken : undefined;
       for (const session of [...this.#sessions]) {
-        if (session.authenticating === data.user) session.authenticating = undefined;
+        if (
+          session.authenticating === data.user &&
+          (apiToken === undefined || session.authenticatingApiToken === apiToken)
+        ) {
+          session.authenticating = undefined;
+        }
         if (session.userId !== data.user) continue;
+        if (apiToken !== undefined && session.apiTokenId !== apiToken) continue;
         this.#disconnect(session);
         session.socket.close();
       }

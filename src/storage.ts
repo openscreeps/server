@@ -13,6 +13,7 @@ export function initialServerState(config: ServerConfig, constants?: Constants):
     }),
     profiles: {},
     tokens: {},
+    apiTokens: {},
     messages: {},
     notificationOutbox: [],
     paused: config.paused,
@@ -62,6 +63,11 @@ function validateServerRecords(value: Record<string, unknown>): void {
       ) &&
       (entry.steam === undefined || (isRecord(entry.steam) && typeof entry.steam.id === 'string')),
     tokens: (entry) => isRecord(entry) && typeof entry.userId === 'string' && finite(entry.expires),
+    apiTokens: (entry) =>
+      isRecord(entry) &&
+      ['_id', 'userId', 'prefix'].every((key) => typeof entry[key] === 'string') &&
+      (entry.description === null || typeof entry.description === 'string') &&
+      finite(entry.created),
     messages: (entry) =>
       isRecord(entry) &&
       ['_id', 'user', 'respondent', 'text'].every((key) => typeof entry[key] === 'string') &&
@@ -122,6 +128,8 @@ export function decodeState(serialized: string): ServerState {
   ) {
     throw new Error('Unsupported or invalid server snapshot');
   }
+  // Snapshots written before persistent API tokens existed hold none.
+  value.apiTokens ??= {};
   const state = parseGameState(value);
   validateServerRecords(value);
   if (value.originalStorage !== undefined) assertOriginalStorageData(value.originalStorage);

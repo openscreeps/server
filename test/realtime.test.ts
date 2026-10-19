@@ -10,7 +10,7 @@ import {
   type WorldState,
 } from '@openscreeps/game';
 import SockJS from 'sockjs-client';
-import { createAuthService } from '../src/api/auth.ts';
+import { createAuthService, issueApiToken } from '../src/api/auth.ts';
 import { setUserPassword } from '../src/api/users.ts';
 import { createConfig } from '../src/config.ts';
 import type { ApiContext, ServerEvents, ServerState, TickEvent } from '../src/contracts.ts';
@@ -18,6 +18,7 @@ import { htmlEncode } from '../src/realtime/encode.ts';
 import { RealtimeHub } from '../src/realtime/hub.ts';
 import { installRealtime } from '../src/realtime/index.ts';
 import { MessagesService } from '../src/services/messages.ts';
+import { ApiTokensService } from '../src/services/api-tokens.ts';
 
 const ALICE = 'a12';
 /** A prefix of Alice's id: upstream let `user:a1` subscribe to `user:a12/...`. */
@@ -135,6 +136,7 @@ function harness(): Harness {
       },
     },
     tokens: {},
+    apiTokens: {},
     messages: {},
     history: {},
     statistics: [],
@@ -780,6 +782,43 @@ void describe('realtime sessions', () => {
     assert.equal(alice.inbox.events(`user:${ALICE}/console`).length, 1);
     const retry = connect(hub);
     retry.send(`auth ${stale}`);
+    assert.equal(
+      await retry.inbox.next((line) => line.startsWith('auth '), 'auth reply'),
+      'auth failed',
+    );
+  });
+
+  void it('returns an API token unchanged and closes only its sessions once it is deleted', async () => {
+    const h = harness();
+    const hub = startHub(h);
+    const apiToken = await h.context.mutate(() => issueApiToken(h.context, ALICE, null));
+    const viaToken = connect(hub);
+    viaToken.send(`auth ${apiToken}`);
+    assert.equal(
+      await viaToken.inbox.next((line) => line.startsWith('auth '), 'auth reply'),
+      `auth ok ${apiToken}`,
+    );
+    // No session token was issued for it.
+    assert.deepEqual(h.state.tokens, {});
+    const viaSession = connect(hub);
+    await signIn(h, viaSession, ALICE);
+    viaToken.send(`subscribe user:${ALICE}/console`);
+
+    const tokenId = await h.context.read(() => h.context.auth.apiTokenId(apiToken));
+    assert.ok(tokenId);
+    const service = new ApiTokensService(h.context);
+    await h.context.mutate(() =>
+      service.delete({
+        query: new URLSearchParams(),
+        body: { tokenId },
+        userId: ALICE,
+        headers: {},
+      }),
+    );
+    assert.equal(viaToken.inbox.closed, true);
+    assert.equal(viaSession.inbox.closed, false);
+    const retry = connect(hub);
+    retry.send(`auth ${apiToken}`);
     assert.equal(
       await retry.inbox.next((line) => line.startsWith('auth '), 'auth reply'),
       'auth failed',

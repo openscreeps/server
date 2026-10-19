@@ -101,8 +101,8 @@ the composer; this repository owns the OpenScreeps extensions in
   operation carries `x-profile` (`required`, `adapted`, `addition` or `extension`,
   with the reason for every standalone adaptation). Official operations the profile
   excludes — hosted screeps.com services such as seasons, decorations trading, PTR,
-  shard CPU allocation, scoped API tokens and shard listings — are absent, and the
-  server does not serve them.
+  shard CPU allocation, API-token rate-limit lifting and shard listings — are absent,
+  and the server does not serve them.
 - `src/generated/api/`: the generated TypeScript client, operation manifest and
   request/response types (`index.ts`, `schema.ts`). Never edit these files.
 
@@ -150,8 +150,8 @@ The client sends credentials only for the operation's declared security scheme
 values, rejects redirects instead of following them and never retries. The composed
 document is also exported as `@openscreeps/server/openapi.json` and `.yaml`.
 
-The current composition has **91 operations**: 84 selected official operations, two
-private-server compatibility additions and five server-owned extensions. All 91 pass
+The current composition has **96 operations**: 89 selected official operations, two
+private-server compatibility additions and five server-owned extensions. All 96 pass
 the real HTTP conformance scenario. A compiled-server smoke also verifies password
 authentication, code persistence across a SQLite restart, committed manual ticks and
 terrain PNG decoding through the generated client.
@@ -505,10 +505,25 @@ node --import tsx --test --test-force-exit --test-timeout=30000 \
 
 Local integration tools can use `POST /api/auth/signin` with
 `{"email":"USERNAME_OR_EMAIL","password":"..."}`. Send the returned token in
-`X-Token`; save the refreshed `X-Token` response header. Tokens expire after 60
-seconds by default, matching the upstream standalone backend. Password changes
-and account removal revoke tokens and authenticated socket sessions; the
-response to the revoking request carries no refreshed `X-Token`.
+`X-Token`; save the refreshed `X-Token` response header. Session tokens expire
+after 60 seconds by default, matching the upstream standalone backend. Password
+changes and account removal revoke session tokens and authenticated socket
+sessions; the response to the revoking request carries no refreshed `X-Token`.
+
+Tools that keep a sign-in between runs use persistent API tokens, as on
+screeps.com. A signed-in player creates one with `POST /api/user/auth-token`
+(`{"type":"full"}`; other types are refused, because only full-access tokens
+exist). The reply's `token`, a random UUID, is shown only once: the world
+stores its SHA-256 hash and its first 8 characters, which
+`GET /api/user/auth-token` lists. An API token never expires and is never
+rotated: replies to requests it authenticates carry no `X-Token`, and the
+socket's `auth ok` returns it unchanged. It is accepted wherever a session
+token is (`X-Token`, `Authorization: Bearer`, `?token=`, socket `auth`).
+`GET /api/auth/query-token?token=...` reports it as full-access. API tokens
+persist with the world and survive restarts and password changes.
+`POST /api/user/delete-auth-token` `{"tokenId":"<_id>"}` revokes one at once
+and closes the socket sessions it authenticated; account removal deletes them
+all. An account holds at most 100.
 
 The official account page changes passwords with `POST /api/user/password`
 `{oldPassword, password}` (signed in). A wrong `oldPassword` answers the HTTP 200
@@ -602,7 +617,7 @@ screeps.com:
 
 Other official screeps.com operations — PTR activation, per-shard CPU and ticks,
 decoration and store trading, seasons, arenas, survival and scoreboards, replays
-and history sharing, scoped tokens, GitHub/e-mail account flows, experimental
+and history sharing, API-token rate limits, GitHub/e-mail account flows, experimental
 PvP/nuke feeds, the server list and shard-addressed room history — belong to
 hosted services. The standalone profile excludes them with reasons, so they are
 absent from `api/openapi.json` and the generated client, and the server answers 404.

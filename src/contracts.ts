@@ -42,8 +42,10 @@ export interface UserMessage {
  */
 export interface ServerState extends GameState {
   profiles: Record<string, UserProfile>;
-  /** SHA-256 token hashes, never plaintext bearer credentials. */
+  /** SHA-256 session token hashes, never plaintext bearer credentials. */
   tokens: Record<string, { userId: string; expires: number }>;
+  /** Persistent API tokens by the SHA-256 hash of the token, never the plaintext token. */
+  apiTokens: Record<string, ApiTokenRecord>;
   messages: Record<string, UserMessage>;
   /** Notification batches from maintenance, ready for delivery to an operator-configured sink. */
   notificationOutbox: NotificationBatch[];
@@ -126,9 +128,25 @@ export interface ServerContext extends GameContext<ServerState> {
   setPaused(paused: boolean): Promise<void>;
   setTickDuration(milliseconds: number): Promise<void>;
 }
+/** A persistent API token (`POST /api/user/auth-token`): full access, no expiry, never rotated. */
+export interface ApiTokenRecord {
+  /** Entry id: `tokenId` of `POST /api/user/delete-auth-token`. */
+  _id: string;
+  userId: string;
+  /** The first 8 characters of the token, which `GET /api/user/auth-token` lists. */
+  prefix: string;
+  description: string | null;
+  /** Creation time (Unix milliseconds); the list is ordered by it. */
+  created: number;
+}
 export interface AuthService {
   /** Called within a context read/mutate callback. */
   check(token: string): string | undefined;
+  /**
+   * Called within a context read/mutate callback: the entry id of the persistent API token
+   * `token`, or `undefined` for a session token or an unknown token. API tokens never rotate.
+   */
+  apiTokenId(token: string): string | undefined;
   /** Called within a context mutate callback. */
   issue(userId: string): string;
 }

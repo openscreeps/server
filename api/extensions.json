@@ -1442,6 +1442,32 @@
               "additionalProperties": true
             }
           },
+          "apiTokens": {
+            "type": "object",
+            "description": "Persistent API tokens keyed by the SHA-256 hash of the token; absent in snapshots written before API tokens existed.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "_id": {
+                  "type": "string"
+                },
+                "userId": {
+                  "type": "string"
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": ["string", "null"]
+                },
+                "created": {
+                  "type": "number"
+                }
+              },
+              "required": ["_id", "userId", "prefix", "description", "created"],
+              "additionalProperties": true
+            }
+          },
           "messages": {
             "type": "object",
             "additionalProperties": {

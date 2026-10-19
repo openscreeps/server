@@ -229,6 +229,7 @@ void describe('POST /api/auth/steam-ticket in native mode', () => {
       profiles: {},
       branches: {},
       tokens: {},
+      apiTokens: {},
       messages: {},
       history: {},
       statistics: [],

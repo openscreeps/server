@@ -128,10 +128,14 @@ export class ApiInterceptor implements NestInterceptor<unknown, unknown> {
       const operation = async () => {
         // Recheck under the lock: a credential may be revoked after the guard's read.
         if (policy.auth) {
-          const userId = this.context.auth.check(requestToken(request));
+          const token = requestToken(request);
+          const userId = this.context.auth.check(token);
           if (!userId) throw new ApiError('unauthorized', 401);
           input.userId = userId;
-          refreshedToken = this.context.auth.issue(userId);
+          // Persistent API tokens are never rotated; session tokens are replaced on every call.
+          if (this.context.auth.apiTokenId(token) === undefined) {
+            refreshedToken = this.context.auth.issue(userId);
+          }
           const profile = this.context.state.profiles[userId];
           if (profile) profile.lastOnline = this.context.now();
         }

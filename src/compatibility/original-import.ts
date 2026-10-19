@@ -1315,6 +1315,7 @@ export function importOriginalWorld(
     pendingGlobalIntents: pendingGlobalIntents,
     profiles,
     tokens: {},
+    apiTokens: {},
     messages,
     notificationOutbox: [],
     paused,

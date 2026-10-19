@@ -10,7 +10,7 @@ import {
   type User,
 } from '@openscreeps/game';
 import { ApiError, type ServerContext, type ServerState, type UserProfile } from '../contracts.ts';
-import { hashPassword } from './auth.ts';
+import { hashPassword, revokeApiTokens } from './auth.ts';
 
 /** Backend email rule (`register/set-username`, `user/email`). */
 export const EMAIL_PATTERN = /^[\w.+&-]+@[\w.&-]+\.[\w.&-]{2,}$/;
@@ -33,6 +33,7 @@ function dropWhere<T>(collection: Record<string, T>, predicate: (value: T) => bo
 export function purgeAccountRecords(state: ServerState, userId: string): void {
   Reflect.deleteProperty(state.profiles, userId);
   dropWhere(state.tokens, (token) => token.userId === userId);
+  revokeApiTokens(state, userId);
   dropWhere(state.messages, (message) => message.user === userId);
   state.notificationOutbox = state.notificationOutbox.filter(
     (notification) => notification.userId !== userId,
@@ -96,8 +97,9 @@ export function createUser(context: ServerContext, options: CreateUserOptions): 
 
 /**
  * Sets (or replaces) the local password of an existing named user and revokes every session:
- * tokens are dropped and `auth:revoked` (`{user}`) is published, which the kernel delivers only
- * after the mutation commits so realtime sessions are closed. Call inside `context.mutate`.
+ * session tokens are dropped and `auth:revoked` (`{user}`) is published, which the kernel delivers
+ * only after the mutation commits so realtime sessions are closed. Persistent API tokens stay
+ * valid until they are deleted. Call inside `context.mutate`.
  */
 export function setUserPassword(context: ServerContext, userId: string, password: string): void {
   const user = context.state.world.users[userId];

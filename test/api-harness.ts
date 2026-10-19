@@ -6,6 +6,7 @@ import { request as httpRequest, Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach } from 'node:test';
 import { AuthController, RegistrationController, UserController } from '../src/api/accounts.ts';
+import { ApiTokensController } from '../src/api/api-tokens.ts';
 import { GameController } from '../src/api/game.ts';
 import { LeaderboardController } from '../src/api/leaderboard.ts';
 import { MarketController } from '../src/api/market.ts';
@@ -19,6 +20,7 @@ import {
 } from '../src/api/platform.ts';
 import { ApiExceptionFilter, SERVER_CONTEXT } from '../src/api/transport.ts';
 import { AccountsService } from '../src/services/accounts.ts';
+import { ApiTokensService } from '../src/services/api-tokens.ts';
 import { GameService } from '../src/services/game.ts';
 import { LeaderboardService } from '../src/services/leaderboard.ts';
 import { MarketService } from '../src/services/market.ts';
@@ -49,6 +51,7 @@ async function startApi(context: ApiContext): Promise<RunningApi> {
       module: ApiTestModule,
       controllers: [
         AuthController,
+        ApiTokensController,
         RegistrationController,
         UserController,
         MessagesController,
@@ -64,6 +67,7 @@ async function startApi(context: ApiContext): Promise<RunningApi> {
       providers: [
         { provide: SERVER_CONTEXT, useValue: context },
         AccountsService,
+        ApiTokensService,
         MessagesService,
         GameService,
         MarketService,
